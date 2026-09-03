@@ -1,0 +1,11 @@
+[
+  {
+    "source": "operating cash flow",
+    "target": "经营现金流"
+  },
+  {
+    "source": "application programming interface",
+    "target": "应用程序编程接口",
+    "aliases": ["application program interface"]
+  }
+]
