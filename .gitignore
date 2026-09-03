@@ -12,3 +12,5 @@ data/
 logs/
 models/
 recordings/
+.impeccable/build/
+.impeccable/review/
