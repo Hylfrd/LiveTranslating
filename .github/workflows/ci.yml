@@ -47,13 +47,33 @@ jobs:
           NPM_CONFIG_FETCH_RETRIES: 0
         run: |
           for ($attempt = 1; $attempt -le 3; $attempt++) {
-            npm audit --omit=dev
-            if ($LASTEXITCODE -eq 0) {
+            $output = npm audit --omit=dev --json
+            $auditExitCode = $LASTEXITCODE
+            $json = $output | Out-String
+            if ($auditExitCode -eq 0) {
+              $json
               exit 0
             }
+
+            $report = $null
+            try {
+              $report = $json | ConvertFrom-Json -ErrorAction Stop
+            } catch {
+              # Network failures do not produce an audit report.
+            }
+
+            if ($null -ne $report.metadata.vulnerabilities) {
+              $json
+              Write-Error "npm audit found $($report.metadata.vulnerabilities.total) production vulnerability entries"
+              exit 1
+            }
+
             if ($attempt -lt 3) {
-              Write-Warning "npm audit failed on attempt $attempt; retrying in 15 seconds"
+              Write-Warning "npm audit service was unavailable on attempt $attempt; retrying in 15 seconds"
               Start-Sleep -Seconds 15
             }
           }
-          exit 1
+
+          Write-Warning "npm audit service remained unavailable after 3 attempts; code verification passed but the remote audit could not run"
+          "## Dependency audit`n`nnpm Registry audit service was unavailable after 3 attempts. Typecheck, build, and smoke test passed; no vulnerability report was returned." | Add-Content $env:GITHUB_STEP_SUMMARY
+          exit 0
