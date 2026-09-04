@@ -1,5 +1,12 @@
-import { createServer, type IncomingMessage, type Server as HttpServer } from "node:http";
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, rm } from "node:fs/promises";
+import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer } from "node:http";
+import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
 import { networkInterfaces } from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
 
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 
@@ -11,24 +18,44 @@ export interface RemoteSourceEndpoint {
   readonly sourceId: AudioSourceId;
   readonly token: string;
   readonly urls: readonly string[];
+  readonly secure: boolean;
+  readonly notice: string;
 }
+
+interface PrivateTlsMaterial {
+  readonly hostname: string;
+  readonly cert: Buffer;
+  readonly key: Buffer;
+}
+
+const execFileAsync = promisify(execFile);
 
 export class RemoteSourceServer {
   private readonly sources = new Map<string, AudioSourceId>();
   private readonly sockets = new Map<AudioSourceId, Set<WebSocket>>();
-  private server: HttpServer | undefined;
+  private server: HttpServer | HttpsServer | undefined;
   private webSockets: WebSocketServer | undefined;
+  private privateHostname: string | undefined;
+  private notice = "浏览器会阻止 HTTP 局域网页面使用麦克风；请先在 Tailscale 管理页启用 HTTPS 证书。";
 
   constructor(
     private readonly audio: NativeAudioManager,
     private readonly logger: AppLogger,
     readonly port = 47321,
+    private readonly rootDirectory = process.cwd(),
   ) {}
 
   async start(): Promise<void> {
     if (this.server) return;
     const webSockets = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
-    const server = createServer((request, response) => this.handleHttp(request, response));
+    const tls = await this.loadTailscaleTls();
+    this.privateHostname = tls?.hostname;
+    this.notice = tls
+      ? "访问仅限同一 Tailscale 私有网络；证书域名会记录在公开 CT 日志。"
+      : "浏览器会阻止 HTTP 局域网页面使用麦克风；请先在 Tailscale 管理页启用 HTTPS 证书。";
+    const server = tls
+      ? createHttpsServer({ cert: tls.cert, key: tls.key }, (request, response) => this.handleHttp(request, response))
+      : createHttpServer((request, response) => this.handleHttp(request, response));
     server.on("upgrade", (request, socket, head) => {
       const match = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`)
         .pathname.match(/^\/source\/([^/]+)\/stream$/u);
@@ -50,16 +77,25 @@ export class RemoteSourceServer {
     });
     this.server = server;
     this.webSockets = webSockets;
-    this.logger.info(`Remote source page listening on port ${this.port}`, "remote");
+    this.logger.info(
+      `Remote source page listening on port ${this.port} (${tls ? "Tailscale HTTPS" : "HTTP fallback"})`,
+      "remote",
+    );
   }
 
   register(sourceId: AudioSourceId, token: string): RemoteSourceEndpoint {
     this.sources.set(token, sourceId);
-    return { sourceId, token, urls: this.urlsFor(token) };
+    return this.endpoint(sourceId, token);
   }
 
   endpoint(sourceId: AudioSourceId, token: string): RemoteSourceEndpoint {
-    return { sourceId, token, urls: this.urlsFor(token) };
+    return {
+      sourceId,
+      token,
+      urls: this.urlsFor(token),
+      secure: Boolean(this.privateHostname),
+      notice: this.notice,
+    };
   }
 
   async stop(): Promise<void> {
@@ -116,6 +152,9 @@ export class RemoteSourceServer {
   }
 
   private urlsFor(token: string): string[] {
+    if (this.privateHostname) {
+      return [`https://${this.privateHostname}:${this.port}/source/${token}`];
+    }
     const hosts = new Set<string>(["127.0.0.1"]);
     for (const addresses of Object.values(networkInterfaces())) {
       for (const address of addresses ?? []) {
@@ -124,6 +163,74 @@ export class RemoteSourceServer {
     }
     return [...hosts].map((host) => `http://${host}:${this.port}/source/${token}`);
   }
+
+  private async loadTailscaleTls(): Promise<PrivateTlsMaterial | undefined> {
+    if (process.platform !== "win32" || process.env.CI === "true") return undefined;
+    const executable = resolveTailscaleExecutable();
+    if (!executable) return undefined;
+    try {
+      const statusResult = await execFileAsync(executable, ["status", "--json"], {
+        encoding: "utf8",
+        timeout: 4000,
+        windowsHide: true,
+      });
+      const status = JSON.parse(String(statusResult.stdout)) as unknown;
+      const hostname = tailscaleCertificateHostname(status);
+      if (!hostname) return undefined;
+
+      const certificateDirectory = path.join(this.rootDirectory, "data", ".remote-tls");
+      await mkdir(certificateDirectory, { recursive: true });
+      const nonce = randomUUID();
+      const certificatePath = path.join(certificateDirectory, `${nonce}.crt`);
+      const keyPath = path.join(certificateDirectory, `${nonce}.key`);
+      try {
+        await execFileAsync(executable, [
+          "cert",
+          "--min-validity=24h",
+          `--cert-file=${certificatePath}`,
+          `--key-file=${keyPath}`,
+          hostname,
+        ], {
+          encoding: "utf8",
+          timeout: 12000,
+          windowsHide: true,
+        });
+        const [cert, key] = await Promise.all([readFile(certificatePath), readFile(keyPath)]);
+        return { hostname, cert, key };
+      } finally {
+        await Promise.allSettled([
+          rm(certificatePath, { force: true }),
+          rm(keyPath, { force: true }),
+        ]);
+      }
+    } catch (error) {
+      this.logger.warn(`Private HTTPS is unavailable: ${errorMessage(error)}`, "remote");
+      return undefined;
+    }
+  }
+}
+
+function resolveTailscaleExecutable(): string | undefined {
+  const programFiles = process.env.ProgramFiles ?? "C:\\Program Files";
+  const installed = path.join(programFiles, "Tailscale", "tailscale.exe");
+  return existsSync(installed) ? installed : undefined;
+}
+
+function tailscaleCertificateHostname(value: unknown): string | undefined {
+  if (!isRecord(value) || !isRecord(value.Self) || typeof value.Self.DNSName !== "string") {
+    return undefined;
+  }
+  const certificateDomains = Array.isArray(value.CertDomains)
+    ? value.CertDomains.filter((item): item is string => typeof item === "string")
+    : [];
+  if (certificateDomains.length === 0) return undefined;
+  const dnsName = value.Self.DNSName.replace(/\.$/u, "");
+  return certificateDomains.find((domain) => domain.replace(/\.$/u, "") === dnsName)
+    ?.replace(/\.$/u, "");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function rawDataToBuffer(data: RawData): Buffer {
@@ -160,4 +267,8 @@ start.onclick=async()=>{try{if(!navigator.mediaDevices?.getUserMedia)throw new E
 stop.onclick=async()=>{processor?.disconnect();stream?.getTracks().forEach(track=>track.stop());socket?.close();await context?.close();queue=[];start.disabled=false;stop.disabled=true;setStatus('已结束')};
 loadDevices().catch(()=>{});
 </script></body></html>`;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

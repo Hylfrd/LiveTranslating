@@ -682,6 +682,10 @@ select:disabled {
   background: #f7faf9;
 }
 
+.remote-source-access.is-insecure {
+  background: var(--red-soft);
+}
+
 .remote-source-access > svg {
   width: 20px;
   height: 20px;
@@ -696,7 +700,8 @@ select:disabled {
 }
 
 .remote-source-access strong,
-.remote-source-access span {
+.remote-source-access span,
+.remote-source-access small {
   overflow: hidden;
   font-size: 12px;
   text-overflow: ellipsis;
@@ -706,6 +711,15 @@ select:disabled {
 .remote-source-access span {
   color: var(--ink-muted);
   font-variant-numeric: tabular-nums;
+}
+
+.remote-source-access small {
+  color: var(--red);
+  white-space: normal;
+}
+
+.remote-source-access.is-secure small {
+  color: var(--teal-dark);
 }
 
 .archive-panel {

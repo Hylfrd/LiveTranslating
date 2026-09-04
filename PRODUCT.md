@@ -49,6 +49,8 @@ context, and delayed revision state consistent across all surfaces.
 - Keep every computer, microphone, and LAN source independently selectable and concurrently usable.
 - Let users add named sources with preset icons, select all computer audio or multiple
   active applications, and combine multiple microphones into one logical source.
+- Keep remote capture private to the user's Tailscale network, never enable public Funnel,
+  and distinguish private service access from the public certificate-domain metadata required by a public CA.
 - Expose microphone device, target language, Hy-MT2 translation model, parallel
   translation, two-stage DeepSeek review, model health, token/cost estimates,
   continuous subtitle paragraphs, per-source archives, exports, and structured logs.

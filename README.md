@@ -90,11 +90,15 @@ well-supported terminology errors and never persists inferred rules.
 
 Adding an Other source starts a tokenized capture page on port `47321`. The page
 lets another device select a microphone and start or stop its stream; received PCM
-enters the same per-source recording and ASR pipeline as local inputs. Modern
-browsers require a trusted secure context for microphone access from a non-loopback
-address. For those devices, expose the local port through a trusted HTTPS reverse
-proxy that forwards WebSocket upgrades; the page automatically uses `wss:` when its
-outer URL is HTTPS.
+enters the same per-source recording and ASR pipeline as local inputs. When Tailscale
+HTTPS certificates are enabled for the private network, the backend obtains the
+machine's `.ts.net` certificate into temporary files, removes the files immediately
+after loading them, and advertises an HTTPS/WSS URL that is reachable only inside the
+same tailnet. It never enables public Funnel. If certificates are unavailable, the UI
+labels the HTTP fallback as unusable for normal remote-browser microphone capture
+instead of presenting it as a working secure URL. Service access remains private,
+but public-CA certificate issuance records the machine's `.ts.net` domain in public
+Certificate Transparency logs.
 
 ## Usage and pricing
 

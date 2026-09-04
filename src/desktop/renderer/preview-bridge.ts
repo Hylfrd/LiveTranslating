@@ -242,7 +242,7 @@ function reduceSnapshot(current: TuiSnapshot, name: DesktopActionName, payload?:
     return {
       ...current,
       sourceOrder: [...current.sourceOrder, id],
-      sources: { ...current.sources, [id]: { id, label: payload.source.name, kind: payload.source.capture.kind, icon: payload.source.icon, selectionLabel, enabled: true, phase: "disabled", level: 0, droppedFrames: 0, ...(payload.source.capture.kind === "remote" ? { remoteUrls: [`http://192.168.1.42:47321/source/previewtoken`] } : {}) } },
+      sources: { ...current.sources, [id]: { id, label: payload.source.name, kind: payload.source.capture.kind, icon: payload.source.icon, selectionLabel, enabled: true, phase: "disabled", level: 0, droppedFrames: 0, ...(payload.source.capture.kind === "remote" ? { remoteUrls: [`https://apostrophe-laptop.example.ts.net:47321/source/previewtoken`], remoteSecure: true, remoteNotice: "访问仅限同一 Tailscale 私有网络；证书域名会记录在公开 CT 日志。" } : {}) } },
       sessions: { ...current.sessions, [id]: { phase: "idle", recording: false, archive: { rootDirectory: "C:\\LiveTranslating\\archives", currentName: "LiveTranslating_2026-9-4_16-30" } } },
       paragraphs: { ...(current.paragraphs ?? {}), [id]: [] },
     };

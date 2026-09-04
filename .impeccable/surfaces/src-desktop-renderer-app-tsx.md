@@ -15,7 +15,7 @@ Audience task: configure a named computer, microphone, or LAN source; run its in
 session; read continuous bilingual paragraphs; export its archive; then continue in a compact window.
 
 Constraints: Simplified Chinese, TUI preserved, normal non-topmost compact window,
-taskbar presence, custom compact chrome, icon generated separately.
+taskbar presence, custom compact chrome, icon generated separately, and private remote capture without public Funnel.
 
 ## Direction contract
 

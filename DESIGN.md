@@ -157,6 +157,8 @@ Each source owns a separate page, session lifecycle, subtitle flow, and archive 
 
 The Add source dialog is the only protected-focus configuration surface. It keeps type, name, icon, and concrete input selection in that order; the selection body scrolls independently while header and footer remain reachable. Computer and microphone inputs share the same dense multi-select row pattern, and lists above ten entries add filtering without changing source semantics.
 
+Remote pages use one slim access band above the transcript: teal on a working private HTTPS endpoint and the existing error surface when only an insecure fallback is available. The band always states the actual access boundary and never presents HTTP browser capture as operational.
+
 The compact surface is designed for a 760x320 window. Its 34px custom title bar remains fixed above a scrolling subtitle stack that keeps the latest three entries at the bottom.
 
 ## Elevation & Depth

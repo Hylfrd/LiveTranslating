@@ -40,6 +40,7 @@ The settings view retains the incumbent unframed ruled sheet while removing sour
 - Browser console produced no warnings or errors.
 - Dynamic source creation, navigation, modal focus containment, and narrow icon-rail labels passed.
 - Medium and narrow headers retained right-aligned transport controls without wrapping or overlapping the archive rail.
+- Remote access state has distinct private-HTTPS and insecure-fallback treatments; the fallback copy does not claim browser microphone support.
 
 ## Findings
 

@@ -202,7 +202,7 @@ export class ApplicationController implements TuiController {
     this.logger = new AppLogger(rootDirectory);
     this.recording = new RecordingManager(rootDirectory);
     this.audio = new NativeAudioManager(this.logger, this.recording);
-    this.remoteSources = new RemoteSourceServer(this.audio, this.logger);
+    this.remoteSources = new RemoteSourceServer(this.audio, this.logger, 47321, rootDirectory);
     this.sourceStore = new SourceStore(rootDirectory);
     this.asrModels = new AsrModelManager(this.logger, rootDirectory);
     this.audio.subscribe((event) => this.handleAudioEvent(event));
@@ -1388,8 +1388,8 @@ export class ApplicationController implements TuiController {
 
   private sourceSnapshot(sourceId: AudioSourceId): TuiSourceState {
     const state = this.sourceState(sourceId);
-    const remoteUrls = state.definition.capture.kind === "remote"
-      ? this.remoteSources.endpoint(sourceId, state.definition.capture.token).urls
+    const remoteEndpoint = state.definition.capture.kind === "remote"
+      ? this.remoteSources.endpoint(sourceId, state.definition.capture.token)
       : undefined;
     return {
       id: sourceId,
@@ -1405,7 +1405,11 @@ export class ApplicationController implements TuiController {
       ...(state.deviceLabel ? { deviceLabel: state.deviceLabel } : {}),
       ...(state.latencyMs === undefined ? {} : { latencyMs: state.latencyMs }),
       ...(state.error ? { error: state.error } : {}),
-      ...(remoteUrls ? { remoteUrls } : {}),
+      ...(remoteEndpoint ? {
+        remoteUrls: remoteEndpoint.urls,
+        remoteSecure: remoteEndpoint.secure,
+        remoteNotice: remoteEndpoint.notice,
+      } : {}),
     };
   }
 

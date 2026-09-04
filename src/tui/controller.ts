@@ -36,6 +36,8 @@ export interface TuiSourceState {
   readonly droppedFrames?: number;
   readonly error?: string;
   readonly remoteUrls?: readonly string[];
+  readonly remoteSecure?: boolean;
+  readonly remoteNotice?: string;
 }
 
 export interface TuiSystemAudioApplication {

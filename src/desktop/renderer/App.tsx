@@ -555,9 +555,13 @@ function SourceView({
       <div className={`source-workspace${panelCollapsed ? " is-panel-collapsed" : ""}`}>
         <div className="source-content">
           {source.kind === "remote" && source.remoteUrls?.length ? (
-            <div className="remote-source-access">
+            <div className={`remote-source-access${source.remoteSecure ? " is-secure" : " is-insecure"}`}>
               <Globe2 aria-hidden="true" />
-              <div><strong>局域网采集页面</strong><span>{source.remoteUrls.find((url) => !url.includes("127.0.0.1")) ?? source.remoteUrls[0]}</span></div>
+              <div>
+                <strong>{source.remoteSecure ? "Tailscale 私有采集页面" : "局域网采集页面（需要 HTTPS）"}</strong>
+                <span>{source.remoteUrls.find((url) => !url.includes("127.0.0.1")) ?? source.remoteUrls[0]}</span>
+                {source.remoteNotice ? <small>{source.remoteNotice}</small> : null}
+              </div>
             </div>
           ) : null}
           <TranscriptReader
@@ -853,7 +857,7 @@ function AddSourceModal({
             </div>
           </div>
         ) : (
-          <div className="remote-source-summary"><Globe2 aria-hidden="true" /><div><strong>局域网采集页面</strong><p>添加后会生成一个带随机令牌的页面地址。其他设备进入页面，选择麦克风并开始或结束采集。</p></div></div>
+          <div className="remote-source-summary"><Globe2 aria-hidden="true" /><div><strong>Tailscale 私有采集页面</strong><p>添加后会生成一个带随机令牌的 HTTPS 地址，仅同一私有网络内的设备可以访问，不会启用公网 Funnel。公共 CA 会把设备域名记录到公开 CT 日志。</p></div></div>
         )}
 
         <footer><button type="button" className="secondary-command" onClick={onClose}>取消</button><button type="button" className="primary-command" disabled={!canAdd || pending} onClick={submit}>添加来源</button></footer>
