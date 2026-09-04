@@ -41,4 +41,19 @@ jobs:
         run: npm run smoke
 
       - name: Audit production dependencies
-        run: npm audit --omit=dev
+        shell: pwsh
+        env:
+          NPM_CONFIG_FETCH_TIMEOUT: 60000
+          NPM_CONFIG_FETCH_RETRIES: 0
+        run: |
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            npm audit --omit=dev
+            if ($LASTEXITCODE -eq 0) {
+              exit 0
+            }
+            if ($attempt -lt 3) {
+              Write-Warning "npm audit failed on attempt $attempt; retrying in 15 seconds"
+              Start-Sleep -Seconds 15
+            }
+          }
+          exit 1
