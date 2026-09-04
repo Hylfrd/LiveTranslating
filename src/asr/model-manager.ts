@@ -11,6 +11,7 @@ const FILES = [
   {
     name: "ggml-large-v3-turbo-q8_0.bin",
     urls: [
+      "https://modelscope.cn/models/iceCream2025/whisper.cpp/resolve/master/ggml-large-v3-turbo-q8_0.bin",
       "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin",
       "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin",
     ],
@@ -24,6 +25,7 @@ const FILES = [
   {
     name: "ggml-silero-v6.2.0.bin",
     urls: [
+      "https://modelscope.cn/models/ggml-org/whisper-vad/resolve/master/ggml-silero-v6.2.0.bin",
       "https://hf-mirror.com/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin",
       "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin",
     ],
