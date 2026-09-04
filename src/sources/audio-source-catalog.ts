@@ -34,7 +34,7 @@ interface MixerModule {
 const require = createRequire(import.meta.url);
 
 export async function listSystemAudioApplications(): Promise<SystemAudioApplication[]> {
-  if (process.platform !== "win32") {
+  if (process.platform !== "win32" || process.env.CI === "true") {
     return [];
   }
   try {
