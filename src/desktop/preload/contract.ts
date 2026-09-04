@@ -75,6 +75,7 @@ export interface DesktopArchiveRequest {
 export type DesktopWindowCommand =
   | "open-overlay"
   | "open-logs"
+  | "open-log-folder"
   | "expand-overlay"
   | "minimize"
   | "close";

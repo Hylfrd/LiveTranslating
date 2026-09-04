@@ -1921,10 +1921,16 @@ select:disabled {
   pointer-events: none;
 }
 
+.toast-stack.has-persistent {
+  top: auto;
+  right: 318px;
+  bottom: 18px;
+}
+
 .toast {
   position: relative;
   display: grid;
-  max-height: 120px;
+  max-height: 148px;
   min-height: 48px;
   padding: 10px 9px 10px 12px;
   grid-template-columns: 18px minmax(0, 1fr) 28px;
@@ -1943,11 +1949,22 @@ select:disabled {
   transition: opacity 180ms ease, transform 180ms ease;
 }
 
+.toast--persistent {
+  grid-template-columns: 18px minmax(0, 1fr);
+}
+
 .toast--success {
   border-color: var(--rule-strong);
   color: var(--teal-dark);
   background: var(--surface-active);
   box-shadow: 0 14px 36px color-mix(in srgb, var(--teal) 15%, transparent);
+}
+
+.toast--info {
+  border-color: var(--rule-strong);
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 7%, #ffffff);
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--blue) 15%, transparent);
 }
 
 .toast.is-leaving {
@@ -1958,6 +1975,46 @@ select:disabled {
 .toast > svg {
   width: 17px;
   height: 17px;
+}
+
+.toast__content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.toast__content strong {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.toast__content small {
+  overflow: hidden;
+  color: color-mix(in srgb, currentColor 76%, #ffffff);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toast__progress {
+  position: relative;
+  height: 4px;
+  margin-top: 4px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: color-mix(in srgb, currentColor 16%, transparent);
+}
+
+.toast__progress i {
+  position: absolute;
+  inset: 0;
+  display: block;
+  background: currentColor;
+  transform-origin: left center;
+  transition: transform 180ms var(--ease-out);
 }
 
 .toast button,
@@ -2106,6 +2163,12 @@ html[data-surface="logs"] #root {
   margin-top: 2px;
   color: var(--ink-faint);
   font-size: 12px;
+}
+
+.log-title .icon-button {
+  margin-left: 2px;
+  border-color: var(--rule);
+  background: #ffffff;
 }
 
 .log-search {
@@ -2304,16 +2367,70 @@ html[data-surface="logs"] #root {
 .log-entry--info .log-entry__level { color: var(--teal-dark); }
 .log-entry--debug .log-entry__level { color: var(--blue); }
 
-.log-entry strong {
+.log-entry__source {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.log-entry__source strong {
   overflow: hidden;
   color: var(--ink);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.log-entry p {
+.log-entry__source small {
+  overflow: hidden;
+  color: var(--ink-faint);
+  font-size: 12px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-entry__message {
+  min-width: 0;
+}
+
+.log-entry__message p {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.log-entry__message details {
+  margin-top: 6px;
+}
+
+.log-entry__message summary {
+  width: max-content;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.log-entry__message details[open] summary {
+  margin-bottom: 7px;
+}
+
+.log-entry__message pre {
+  max-width: 100%;
+  max-height: 360px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  color: var(--ink);
+  background: var(--surface-soft);
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .log-empty {
@@ -2585,6 +2702,10 @@ html[data-surface="compact"][data-preview="true"] #root {
   .source-workspace.is-panel-collapsed {
     grid-template-columns: minmax(0, 1fr) 48px;
   }
+
+  .toast-stack.has-persistent {
+    right: 288px;
+  }
 }
 
 @media (max-width: 760px) {
@@ -2730,6 +2851,10 @@ html[data-surface="compact"][data-preview="true"] #root {
 
   .archive-bundle__header {
     align-items: flex-start;
+  }
+
+  .toast-stack.has-persistent {
+    right: 18px;
   }
 
   .modal-backdrop {

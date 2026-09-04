@@ -72,6 +72,7 @@ export interface ArchiveOperationRequest {
 export type WindowControlCommand =
   | "open-overlay"
   | "open-logs"
+  | "open-log-folder"
   | "expand-overlay"
   | "minimize"
   | "close";

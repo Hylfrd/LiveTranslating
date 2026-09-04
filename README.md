@@ -54,7 +54,15 @@ available from the Vite server with `?surface=main&preview=1` or
 `?surface=compact&preview=1`; preview data is never enabled in Electron.
 
 On first capture, the app downloads the multilingual Whisper large-v3-turbo Q8
-model and Silero VAD to `models/`. Verified mirrors are tried in order.
+model and Silero VAD to `models/`. Verified mirrors are tried in order. A persistent
+Toast reports the current file, mirror, transferred bytes, percentage, verification,
+and retries; only the completed or failed state auto-dismisses.
+
+Portable builds use `PORTABLE_EXECUTABLE_DIR` instead of Electron's temporary
+extraction directory. When an executable is launched from this repository's
+`release/` folder, runtime data and `.env` resolve from the repository root. A
+standalone portable executable uses its own directory. Set
+`LIVE_TRANSLATING_DATA_DIR` to explicitly choose another persistent root.
 
 ## TUI keys
 
@@ -90,6 +98,20 @@ well-supported terminology errors and never persists inferred rules.
 - Same-minute name collisions are reserved atomically and receive `_2`, `_3`, and later suffixes.
 - Fifteen-minute WAV segmentation limits damage from interrupted sessions
 - Structured application logs: `logs/YYYY-MM-DD.jsonl`
+
+Logs are appended asynchronously as individual JSONL records and the current day's
+last 500 records are restored on startup. Provider requests, non-streaming responses,
+errors, raw Whisper segments, and committed transcript timing include expandable
+structured details in the log window. Authorization headers, API-key fields, bearer
+tokens, and `sk-` values are recursively redacted. Source and translation text remain
+in local logs because they are required for debugging.
+
+## ASR latency
+
+The desktop pipeline uses a 2-second Whisper queue, 400ms VAD silence boundary, and
+shorter sentence-commit limits. Silent real-time tests on the two reference lecture
+clips produced zero dropped frames. On 60-second clips, committed-sentence P95 fell
+from 3.98s to 2.28s for Yale and from 4.56s to 2.38s for Stanford.
 
 The compact subtitle window keeps up to 160 recent entries in a scrollable newest-first
 list. The latest entry stays at the top and receives the strongest translation size.

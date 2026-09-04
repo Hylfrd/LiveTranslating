@@ -1,8 +1,9 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 
 import { FfmpegWhisperSession, type AsrTranscript } from "../asr/ffmpeg-whisper.js";
-import { AsrModelManager } from "../asr/model-manager.js";
+import { AsrModelManager, type AsrModelProgress } from "../asr/model-manager.js";
 import { TranscriptAssembler, cleanAsrText } from "../asr/transcript-assembler.js";
 import type {
   AudioSourceDefinition,
@@ -39,7 +40,7 @@ import type {
   TuiSubtitleParagraph,
   TuiTranslationModel,
 } from "../tui/controller.js";
-import { OpenAICompatibleTranslationProvider } from "../translation/provider.js";
+import { OpenAICompatibleTranslationProvider, type TranslationProviderTelemetry } from "../translation/provider.js";
 import type { ProviderModelId, TranslationRequest, TranslationResult } from "../translation/schema.js";
 
 const SOURCE_LANGUAGES: readonly TuiLanguage[] = [
@@ -151,6 +152,7 @@ export class ApplicationController implements TuiController {
   private terminologyReviewEnabled = true;
   private terminologyReviewModel: TuiReviewModel = "deepseek-v4-flash";
   private reviewQueueSize = 0;
+  private lastTranslationFailureNoticeAt = 0;
   private modelHealth: TuiModelHealth[] = ([
     "hy-mt2-plus",
     "hy-mt2-pro",
@@ -204,7 +206,23 @@ export class ApplicationController implements TuiController {
     this.audio = new NativeAudioManager(this.logger, this.recording);
     this.remoteSources = new RemoteSourceServer(this.audio, this.logger, 47321, rootDirectory);
     this.sourceStore = new SourceStore(rootDirectory);
-    this.asrModels = new AsrModelManager(this.logger, rootDirectory);
+    this.asrModels = new AsrModelManager(
+      this.logger,
+      rootDirectory,
+      (progress) => this.handleAsrModelProgress(progress),
+    );
+    this.translator.registry.subscribeTelemetry((event) => this.handleTranslationTelemetry(event));
+    this.logger.info(
+      "Runtime paths and provider configuration resolved",
+      "app",
+      {
+        rootDirectory,
+        logDirectory: this.logger.directory,
+        modelDirectory: path.join(rootDirectory, "models"),
+        configuredModels: this.translator.registry.configuredModels(),
+      },
+      "app.runtime.resolved",
+    );
     this.audio.subscribe((event) => this.handleAudioEvent(event));
     this.logger.subscribe(() => this.emit());
   }
@@ -278,10 +296,7 @@ export class ApplicationController implements TuiController {
       paragraphs: Object.fromEntries(
         this.sourceOrder.map((sourceId) => [sourceId, groupSubtitleParagraphs(this.subtitles, sourceId)]),
       ),
-      logs: this.logger.recent(100).map((entry) => ({
-        ...entry,
-        timestamp: entry.timestamp.slice(11, 19),
-      })),
+      logs: this.logger.recent(500),
     };
   }
 
@@ -706,6 +721,10 @@ export class ApplicationController implements TuiController {
     this.pushNotification("success", message);
   }
 
+  logDirectory(): string {
+    return this.logger.directory;
+  }
+
   async shutdown(): Promise<void> {
     if (this.shutdownPromise) {
       return this.shutdownPromise;
@@ -940,6 +959,18 @@ export class ApplicationController implements TuiController {
       return;
     }
     this.lastTranscripts.set(transcript.sourceId, { text, at: transcript.speechEndedAt });
+    this.logger.debug(
+      "Transcript committed to the UI",
+      `asr:${transcript.sourceId}`,
+      {
+        text,
+        speechStartedAt: new Date(transcript.speechStartedAt).toISOString(),
+        speechEndedAt: new Date(transcript.speechEndedAt).toISOString(),
+        speechDurationMs: transcript.speechEndedAt - transcript.speechStartedAt,
+        latencyAfterSpeechMs: Math.max(0, Date.now() - transcript.speechEndedAt),
+      },
+      "asr.transcript.committed",
+    );
     const translationOmitted = isPredominantlyTargetLanguage(text, this.targetLanguage);
     const entry: TuiSubtitleEntry = {
       id: randomUUID(),
@@ -990,10 +1021,20 @@ export class ApplicationController implements TuiController {
     const current = previous
       .then(() => this.translateEntry(entry, settings))
       .catch((error) => {
-        if (!this.closed) this.logger.error(
-          `Translation failed: ${error instanceof Error ? error.message : String(error)}`,
-          entry.sourceId,
-        );
+        if (!this.closed) {
+          this.updateSubtitle(entry.id, { translation: "翻译失败，请查看运行日志" });
+          this.logger.error(
+            `Translation failed: ${error instanceof Error ? error.message : String(error)}`,
+            entry.sourceId,
+            { entryId: entry.id, sourceText: entry.sourceText, error },
+            "translation.failed",
+          );
+          const now = Date.now();
+          if (now - this.lastTranslationFailureNoticeAt >= 15000) {
+            this.lastTranslationFailureNoticeAt = now;
+            this.pushNotification("error", "翻译请求失败，原始错误已写入运行日志");
+          }
+        }
       })
       .finally(() => {
         if (this.translationQueues.get(entry.sourceId) === current) {
@@ -1125,6 +1166,8 @@ export class ApplicationController implements TuiController {
             this.logger.warn(
               `${model} ${mode} review failed: ${error instanceof Error ? error.message : String(error)}`,
               entry.sourceId,
+              { entryId: entry.id, model, mode, sourceText: entry.sourceText, error },
+              "translation.review.failed",
             );
           }
         }
@@ -1355,6 +1398,50 @@ export class ApplicationController implements TuiController {
     await this.sourceStore.save(definitions);
   }
 
+  private handleAsrModelProgress(progress: AsrModelProgress): void {
+    if (this.closed) return;
+    const id = `asr-model:${progress.file}`;
+    const label = progress.file.includes("silero") ? "语音活动检测模型" : "Whisper 语音模型";
+    const ratio = progress.totalBytes > 0
+      ? Math.min(1, progress.downloadedBytes / progress.totalBytes)
+      : 0;
+    const transferred = `${formatMegabytes(progress.downloadedBytes)} / ${formatMegabytes(progress.totalBytes)}`;
+    const notification: TuiNotification = progress.phase === "complete"
+      ? { id, kind: "success", message: `${label}下载完成`, detail: transferred, progress: 1 }
+      : progress.phase === "verifying"
+        ? { id, kind: "info", message: `正在校验${label}`, detail: transferred, persistent: true, progress: 1 }
+        : progress.phase === "retrying"
+          ? { id, kind: "info", message: `${label}镜像失败，正在重试`, detail: progress.error ?? progress.mirror ?? "正在切换下载镜像", persistent: true, progress: ratio }
+          : progress.phase === "failed"
+            ? { id, kind: "error", message: `${label}下载失败`, detail: progress.error ?? "所有下载镜像均不可用", progress: ratio }
+            : {
+                id,
+                kind: "info",
+                message: `正在下载${label} · ${Math.round(ratio * 100)}%`,
+                detail: `${transferred}${progress.mirror ? ` · ${progress.mirror}` : ""}`,
+                persistent: true,
+                progress: ratio,
+              };
+    const existing = this.notifications.findIndex((item) => item.id === id);
+    this.notifications = existing >= 0
+      ? this.notifications.map((item, index) => index === existing ? notification : item)
+      : [...this.notifications.slice(-7), notification];
+    this.emit();
+  }
+
+  private handleTranslationTelemetry(event: TranslationProviderTelemetry): void {
+    const source = `provider:${event.model}`;
+    if (event.type === "request") {
+      this.logger.debug(`${event.model} request`, source, event, "provider.request");
+    } else if (event.type === "response") {
+      this.logger.debug(`${event.model} response in ${Math.round(event.durationMs)} ms`, source, event, "provider.response");
+    } else if (event.type === "error") {
+      this.logger.error(`${event.model} request failed`, source, event, "provider.error");
+    } else {
+      this.logger.warn(`${event.model} rate limit retry ${event.attempt}`, source, event, "provider.rate_limit_retry");
+    }
+  }
+
   private pushNotification(kind: TuiNotification["kind"], message: string): void {
     this.notifications = [
       ...this.notifications.slice(-7),
@@ -1506,6 +1593,10 @@ function formatLocalTime(epochMs: number): string {
   return [date.getHours(), date.getMinutes(), date.getSeconds()]
     .map((value) => String(value).padStart(2, "0"))
     .join(":");
+}
+
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / 1_000_000).toFixed(bytes >= 100_000_000 ? 0 : 1)} MB`;
 }
 
 function groupSubtitleParagraphs(

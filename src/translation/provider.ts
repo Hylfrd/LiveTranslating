@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import OpenAI from "openai";
 
 import type { AppConfig } from "../config.js";
@@ -24,12 +26,11 @@ type TranslationSettings = AppConfig["translation"];
 type ProviderSettings = TranslationSettings["providers"][ProviderModelId];
 type ThinkingMode = "disabled" | "enabled";
 
-export interface TranslationProviderTelemetry {
-  readonly type: "rate_limit_retry";
-  readonly model: ProviderModelId;
-  readonly attempt: number;
-  readonly delayMs: number;
-}
+export type TranslationProviderTelemetry =
+  | { readonly type: "request"; readonly model: ProviderModelId; readonly requestId: string; readonly mode: "complete" | "stream"; readonly payload: CompatibleRequest }
+  | { readonly type: "response"; readonly model: ProviderModelId; readonly requestId: string; readonly mode: "complete" | "stream"; readonly durationMs: number; readonly payload: unknown }
+  | { readonly type: "error"; readonly model: ProviderModelId; readonly requestId: string; readonly mode: "complete" | "stream"; readonly durationMs: number; readonly error: unknown }
+  | { readonly type: "rate_limit_retry"; readonly model: ProviderModelId; readonly attempt: number; readonly delayMs: number };
 
 type CompatibleRequest = OpenAI.Chat.Completions.ChatCompletionCreateParams &
   Record<string, unknown>;
@@ -54,8 +55,8 @@ export class TranslationProviderError extends Error {
   readonly statusCode: number;
   readonly providerCode: string | undefined;
 
-  constructor(message: string, statusCode = 502, providerCode?: string) {
-    super(message);
+  constructor(message: string, statusCode = 502, providerCode?: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "TranslationProviderError";
     this.statusCode = statusCode;
     this.providerCode = providerCode;
@@ -296,36 +297,60 @@ class ProviderRuntime {
 
     try {
       return await this.withRateLimitRetry(async () => {
-        const client = this.requireClient();
-        const release = await this.semaphore.acquire(combinedSignal);
+        const requestId = randomUUID();
+        const startedAt = performance.now();
+        const payload = this.createParams(messages, false, thinkingMode, limits?.maxOutputTokens);
+        this.onTelemetry?.({ type: "request", model: this.id, requestId, mode: "complete", payload });
         try {
-          const response = await client.chat.completions.create(
-            this.createParams(messages, false, thinkingMode, limits?.maxOutputTokens),
-            { signal: combinedSignal, timeout: limits?.timeoutMs ?? this.timeoutMs },
-          );
-          const completion = response as OpenAI.Chat.Completions.ChatCompletion;
-          const choice = completion.choices[0];
-          assertCompleted(choice?.finish_reason);
-          const text = choice?.message.content?.trim();
-          if (!text) {
-            throw new TranslationProviderError("Translation provider returned an empty result");
-          }
+          const client = this.requireClient();
+          const release = await this.semaphore.acquire(combinedSignal);
+          try {
+            const response = await client.chat.completions.create(
+              payload,
+              { signal: combinedSignal, timeout: limits?.timeoutMs ?? this.timeoutMs },
+            );
+            const completion = response as OpenAI.Chat.Completions.ChatCompletion;
+            this.onTelemetry?.({
+              type: "response",
+              model: this.id,
+              requestId,
+              mode: "complete",
+              durationMs: performance.now() - startedAt,
+              payload: completion,
+            });
+            const choice = completion.choices[0];
+            assertCompleted(choice?.finish_reason);
+            const text = choice?.message.content?.trim();
+            if (!text) {
+              throw new TranslationProviderError("Translation provider returned an empty result");
+            }
 
-          const result: TranslationResult = { text, model: this.id };
-          if (completion.usage) {
-            result.usage = {
-              inputTokens: completion.usage.prompt_tokens,
-              outputTokens: completion.usage.completion_tokens,
-              ...(completion.usage.prompt_tokens_details?.cached_tokens === undefined
-                ? {}
-                : { cachedInputTokens: completion.usage.prompt_tokens_details.cached_tokens }),
-            };
-          } else {
-            result.usage = await estimateTokenUsage(this.id, JSON.stringify(messages), text);
+            const result: TranslationResult = { text, model: this.id };
+            if (completion.usage) {
+              result.usage = {
+                inputTokens: completion.usage.prompt_tokens,
+                outputTokens: completion.usage.completion_tokens,
+                ...(completion.usage.prompt_tokens_details?.cached_tokens === undefined
+                  ? {}
+                  : { cachedInputTokens: completion.usage.prompt_tokens_details.cached_tokens }),
+              };
+            } else {
+              result.usage = await estimateTokenUsage(this.id, JSON.stringify(messages), text);
+            }
+            return result;
+          } finally {
+            release();
           }
-          return result;
-        } finally {
-          release();
+        } catch (error) {
+          this.onTelemetry?.({
+            type: "error",
+            model: this.id,
+            requestId,
+            mode: "complete",
+            durationMs: performance.now() - startedAt,
+            error,
+          });
+          throw error;
         }
       }, combinedSignal);
     } catch (error) {
@@ -342,50 +367,74 @@ class ProviderRuntime {
 
     try {
       return await this.withRateLimitRetry(async () => {
-        const client = this.requireClient();
-        const release = await this.semaphore.acquire(combinedSignal);
+        const requestId = randomUUID();
+        const startedAt = performance.now();
+        const payload = this.createParams(messages, true, thinkingMode);
+        this.onTelemetry?.({ type: "request", model: this.id, requestId, mode: "stream", payload });
         const chunks: string[] = [];
         let finishReason: string | null | undefined;
         let usage: TranslationUsage | undefined;
 
         try {
-          const stream = await client.chat.completions.create(
-            this.createParams(messages, true, thinkingMode),
-            { signal: combinedSignal, timeout: this.timeoutMs },
-          );
+          const client = this.requireClient();
+          const release = await this.semaphore.acquire(combinedSignal);
+          try {
+            const stream = await client.chat.completions.create(
+              payload,
+              { signal: combinedSignal, timeout: this.timeoutMs },
+            );
 
-          for await (const chunk of stream as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>) {
-            const choice = chunk.choices[0];
-            const delta = choice?.delta.content;
-            if (choice?.finish_reason) {
-              finishReason = choice.finish_reason;
+            for await (const chunk of stream as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>) {
+              const choice = chunk.choices[0];
+              const delta = choice?.delta.content;
+              if (choice?.finish_reason) {
+                finishReason = choice.finish_reason;
+              }
+              if (delta) {
+                chunks.push(delta);
+              }
+              if (chunk.usage) {
+                usage = {
+                  inputTokens: chunk.usage.prompt_tokens,
+                  outputTokens: chunk.usage.completion_tokens,
+                  ...(chunk.usage.prompt_tokens_details?.cached_tokens === undefined
+                    ? {}
+                    : { cachedInputTokens: chunk.usage.prompt_tokens_details.cached_tokens }),
+                };
+              }
             }
-            if (delta) {
-              chunks.push(delta);
-            }
-            if (chunk.usage) {
-              usage = {
-                inputTokens: chunk.usage.prompt_tokens,
-                outputTokens: chunk.usage.completion_tokens,
-                ...(chunk.usage.prompt_tokens_details?.cached_tokens === undefined
-                  ? {}
-                  : { cachedInputTokens: chunk.usage.prompt_tokens_details.cached_tokens }),
-              };
-            }
-          }
 
-          assertCompleted(finishReason);
-          const text = chunks.join("").trim();
-          if (!text) {
-            throw new TranslationProviderError("Translation provider returned an empty result");
+            this.onTelemetry?.({
+              type: "response",
+              model: this.id,
+              requestId,
+              mode: "stream",
+              durationMs: performance.now() - startedAt,
+              payload: { chunks, finishReason, usage },
+            });
+            assertCompleted(finishReason);
+            const text = chunks.join("").trim();
+            if (!text) {
+              throw new TranslationProviderError("Translation provider returned an empty result");
+            }
+            return {
+              chunks,
+              text,
+              usage: usage ?? await estimateTokenUsage(this.id, JSON.stringify(messages), text),
+            };
+          } finally {
+            release();
           }
-          return {
-            chunks,
-            text,
-            usage: usage ?? await estimateTokenUsage(this.id, JSON.stringify(messages), text),
-          };
-        } finally {
-          release();
+        } catch (error) {
+          this.onTelemetry?.({
+            type: "error",
+            model: this.id,
+            requestId,
+            mode: "stream",
+            durationMs: performance.now() - startedAt,
+            error,
+          });
+          throw error;
         }
       }, combinedSignal);
     } catch (error) {

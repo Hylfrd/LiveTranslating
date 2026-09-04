@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { access, mkdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 import type { AppLogger } from "../logging/app-logger.js";
@@ -41,6 +41,16 @@ export interface WhisperModelPaths {
   readonly vad: string;
 }
 
+export interface AsrModelProgress {
+  readonly file: string;
+  readonly phase: "downloading" | "verifying" | "complete" | "retrying" | "failed";
+  readonly downloadedBytes: number;
+  readonly totalBytes: number;
+  readonly mirror?: string;
+  readonly attempt?: number;
+  readonly error?: string;
+}
+
 export class AsrModelManager {
   private inFlight: Promise<WhisperModelPaths> | undefined;
   private verifiedPaths: WhisperModelPaths | undefined;
@@ -48,6 +58,7 @@ export class AsrModelManager {
   constructor(
     private readonly logger: AppLogger,
     private readonly rootDirectory = process.cwd(),
+    private readonly onProgress?: (progress: AsrModelProgress) => void,
   ) {}
 
   ensureModels(signal?: AbortSignal): Promise<WhisperModelPaths> {
@@ -100,10 +111,12 @@ export class AsrModelManager {
     signal?: AbortSignal,
   ): Promise<void> {
     const partPath = `${destination}.part`;
-    this.logger.info(`Downloading ${path.basename(destination)}...`, "asr");
+    const file = path.basename(destination);
+    this.logger.info(`Downloading ${file}...`, "asr", { file, expectedBytes }, "asr.model.download.started");
     let lastError: unknown;
-    for (const url of urls) {
+    for (const [index, url] of urls.entries()) {
       signal?.throwIfAborted();
+      const mirror = new URL(url).host;
       try {
         let existingBytes = await fileSize(partPath);
         if (existingBytes > expectedBytes) {
@@ -111,11 +124,13 @@ export class AsrModelManager {
           existingBytes = 0;
         }
         if (existingBytes === expectedBytes) {
+          this.emitProgress({ file, phase: "verifying", downloadedBytes: existingBytes, totalBytes: expectedBytes, mirror, attempt: index + 1 });
           if (
             !expectedHash ||
             (await hashFile(partPath, expectedHash.algorithm, signal)) === expectedHash.value
           ) {
             await rename(partPath, destination);
+            this.emitProgress({ file, phase: "complete", downloadedBytes: expectedBytes, totalBytes: expectedBytes, mirror, attempt: index + 1 });
             return;
           }
           await rm(partPath, { force: true });
@@ -133,10 +148,37 @@ export class AsrModelManager {
         if (!response.ok || !response.body) {
           throw new Error(`HTTP ${response.status}`);
         }
+        const append = existingBytes > 0 && response.status === 206;
+        let downloadedBytes = append ? existingBytes : 0;
+        let lastProgressAt = 0;
+        let lastPercent = -1;
+        this.emitProgress({ file, phase: "downloading", downloadedBytes, totalBytes: expectedBytes, mirror, attempt: index + 1 });
+        const progressStream = new Transform({
+          transform(chunk, _encoding, callback) {
+            downloadedBytes += (chunk as Buffer).byteLength;
+            const percent = Math.min(100, Math.floor(downloadedBytes / expectedBytes * 100));
+            const now = Date.now();
+            if (percent !== lastPercent && (now - lastProgressAt >= 250 || percent === 100)) {
+              lastPercent = percent;
+              lastProgressAt = now;
+              onChunkProgress(downloadedBytes);
+            }
+            callback(null, chunk);
+          },
+        });
+        const onChunkProgress = (currentBytes: number) => this.emitProgress({
+          file,
+          phase: "downloading",
+          downloadedBytes: Math.min(expectedBytes, currentBytes),
+          totalBytes: expectedBytes,
+          mirror,
+          attempt: index + 1,
+        });
         await pipeline(
           Readable.from(response.body as unknown as AsyncIterable<Uint8Array>),
+          progressStream,
           createWriteStream(partPath, {
-            flags: existingBytes > 0 && response.status === 206 ? "a" : "w",
+            flags: append ? "a" : "w",
           }),
           { signal: attemptSignal },
         );
@@ -147,6 +189,7 @@ export class AsrModelManager {
         if (info.size !== expectedBytes) {
           throw new Error(`download size mismatch (${info.size} != ${expectedBytes})`);
         }
+        this.emitProgress({ file, phase: "verifying", downloadedBytes: info.size, totalBytes: expectedBytes, mirror, attempt: index + 1 });
         if (
           expectedHash &&
           (await hashFile(partPath, expectedHash.algorithm, signal)) !== expectedHash.value
@@ -154,9 +197,12 @@ export class AsrModelManager {
           throw new Error(`${expectedHash.algorithm.toUpperCase()} verification failed`);
         }
         await rename(partPath, destination);
+        this.emitProgress({ file, phase: "complete", downloadedBytes: info.size, totalBytes: expectedBytes, mirror, attempt: index + 1 });
         this.logger.info(
-          `Downloaded ${path.basename(destination)} (${Math.round(info.size / 1_000_000)} MB)`,
+          `Downloaded ${file} (${Math.round(info.size / 1_000_000)} MB)`,
           "asr",
+          { file, bytes: info.size, mirror },
+          "asr.model.download.completed",
         );
         return;
       } catch (error) {
@@ -164,15 +210,37 @@ export class AsrModelManager {
           throw abortReason(signal);
         }
         lastError = error;
+        this.emitProgress({
+          file,
+          phase: "retrying",
+          downloadedBytes: await fileSize(partPath),
+          totalBytes: expectedBytes,
+          mirror,
+          attempt: index + 1,
+          error: error instanceof Error ? error.message : String(error),
+        });
         this.logger.warn(
-          `Model mirror ${new URL(url).host} failed: ${error instanceof Error ? error.message : String(error)}`,
+          `Model mirror ${mirror} failed: ${error instanceof Error ? error.message : String(error)}`,
           "asr",
+          { file, mirror, attempt: index + 1, error },
+          "asr.model.download.retrying",
         );
       }
     }
+    this.emitProgress({
+      file,
+      phase: "failed",
+      downloadedBytes: await fileSize(partPath),
+      totalBytes: expectedBytes,
+      error: lastError instanceof Error ? lastError.message : String(lastError),
+    });
     throw new Error(
       `All model mirrors failed: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
     );
+  }
+
+  private emitProgress(progress: AsrModelProgress): void {
+    this.onProgress?.(progress);
   }
 }
 

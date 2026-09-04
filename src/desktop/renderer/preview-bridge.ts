@@ -19,6 +19,7 @@ const targetLanguages = [
 ];
 const models: readonly TuiTranslationModel[] = ["hy-mt2-plus", "hy-mt2-pro"];
 const previewRecording = new URLSearchParams(window.location.search).get("previewRecording") === "1";
+const previewDownload = new URLSearchParams(window.location.search).get("previewDownload") === "1";
 
 let snapshot: TuiSnapshot = {
   running: previewRecording,
@@ -140,7 +141,14 @@ let snapshot: TuiSnapshot = {
     totals: { CNY: 0.004526, USD: 0.001237 },
     pricingReference: { source: "models.dev", status: "checked", checkedAt: new Date().toISOString(), message: "在线参考仍是旧价，当前继续采用官方峰谷价" },
   },
-  notifications: [],
+  notifications: previewDownload ? [{
+    id: "asr-model:ggml-large-v3-turbo-q8_0.bin",
+    kind: "info",
+    message: "正在下载 Whisper 语音模型 · 42%",
+    detail: "367 MB / 874 MB · hf-mirror.com",
+    persistent: true,
+    progress: 0.42,
+  }] : [],
   reviewerEnabled: true,
   secondaryTranslationEnabled: false,
   terminologyReviewEnabled: true,
@@ -161,8 +169,32 @@ let snapshot: TuiSnapshot = {
   ],
   logs: [
     { id: "l1", timestamp: "10:24:42", level: "info", source: "audio", message: "双路音频采集正常" },
-    { id: "l2", timestamp: "10:24:46", level: "info", source: "asr", message: "Whisper queue 4s / no dropped frames" },
+    { id: "l2", timestamp: "10:24:46", level: "info", source: "asr", message: "Whisper queue 2s / no dropped frames" },
     { id: "l3", timestamp: "10:24:49", level: "debug", source: "review", message: "上下文复核修正了 1 条字幕" },
+    {
+      id: "l4",
+      timestamp: "2026-09-04T12:24:52.000Z",
+      level: "error",
+      source: "provider:hy-mt2-plus",
+      event: "provider.error",
+      message: "hy-mt2-plus request failed",
+      details: {
+        type: "error",
+        model: "hy-mt2-plus",
+        requestId: "req-preview-42",
+        durationMs: 318,
+        error: { name: "APIError", status: 401, code: "invalid_api_key", message: "Authentication failed", authorization: "[REDACTED]" },
+      },
+    },
+    {
+      id: "l5",
+      timestamp: "2026-09-04T12:24:53.000Z",
+      level: "error",
+      source: "system",
+      event: "translation.failed",
+      message: "Translation failed: All enabled translation models failed",
+      details: { entryId: "subtitle-preview-5", sourceText: "The capital asset pricing model describes expected return.", errors: [{ providerCode: "TRANSLATION_PROVIDER_CONFIGURATION" }] },
+    },
   ],
 };
 

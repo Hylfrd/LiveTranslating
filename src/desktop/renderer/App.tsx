@@ -211,7 +211,7 @@ function ToastStack({
 }) {
   if (!bridgeError && !sourceError && notifications.length === 0) return null;
   return (
-    <div className="toast-stack">
+    <div className={`toast-stack${notifications.some((notification) => notification.persistent) ? " has-persistent" : ""}`}>
       {bridgeError ? <Toast kind="error" message={bridgeError} onDismiss={onDismissBridge} /> : null}
       {sourceError ? <Toast kind="error" message={sourceError} onDismiss={onDismissSource} /> : null}
       {notifications.map((notification) => (
@@ -219,6 +219,9 @@ function ToastStack({
           key={notification.id}
           kind={notification.kind}
           message={notification.message}
+          {...(notification.detail === undefined ? {} : { detail: notification.detail })}
+          {...(notification.persistent === undefined ? {} : { persistent: notification.persistent })}
+          {...(notification.progress === undefined ? {} : { progress: notification.progress })}
           onDismiss={() => onDismissNotification(notification.id)}
         />
       ))}
@@ -229,10 +232,16 @@ function ToastStack({
 function Toast({
   kind,
   message,
+  detail,
+  persistent = false,
+  progress,
   onDismiss,
 }: {
   readonly kind: TuiNotification["kind"];
   readonly message: string;
+  readonly detail?: string;
+  readonly persistent?: boolean;
+  readonly progress?: number;
   readonly onDismiss: () => void;
 }) {
   const [leaving, setLeaving] = useState(false);
@@ -240,16 +249,25 @@ function Toast({
   useEffect(() => { dismissRef.current = onDismiss; }, [onDismiss]);
   useEffect(() => {
     setLeaving(false);
+    if (persistent) return undefined;
     const leaveTimer = window.setTimeout(() => setLeaving(true), 5200);
     const dismissTimer = window.setTimeout(() => dismissRef.current(), 5600);
     return () => { window.clearTimeout(leaveTimer); window.clearTimeout(dismissTimer); };
-  }, [message]);
-  const Icon = kind === "success" ? CheckCircle2 : AlertCircle;
+  }, [message, persistent]);
+  const Icon = kind === "success" ? CheckCircle2 : kind === "info" ? Download : AlertCircle;
   return (
-    <div className={`toast toast--${kind}${leaving ? " is-leaving" : ""}`} role={kind === "error" ? "alert" : "status"}>
+    <div className={`toast toast--${kind}${persistent ? " toast--persistent" : ""}${leaving ? " is-leaving" : ""}`} role={kind === "error" ? "alert" : "status"}>
       <Icon aria-hidden="true" />
-      <span>{message}</span>
-      <button type="button" aria-label="关闭提示" title="关闭提示" onClick={onDismiss}><X aria-hidden="true" /></button>
+      <div className="toast__content">
+        <strong>{message}</strong>
+        {detail ? <small>{detail}</small> : null}
+        {progress === undefined ? null : (
+          <span className="toast__progress" role="progressbar" aria-label={message} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}>
+            <i style={{ transform: `scaleX(${Math.min(1, Math.max(0, progress))})` }} />
+          </span>
+        )}
+      </div>
+      {persistent ? null : <button type="button" aria-label="关闭提示" title="关闭提示" onClick={onDismiss}><X aria-hidden="true" /></button>}
     </div>
   );
 }

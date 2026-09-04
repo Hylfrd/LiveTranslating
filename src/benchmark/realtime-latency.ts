@@ -198,7 +198,7 @@ try {
       reviews: records.filter((record) => record.reviewedAt !== undefined).length,
       translationErrors: records.filter((record) => record.translationError).length,
       reviewErrors: records.filter((record) => record.reviewError).length,
-      rateLimitRetries: telemetry.length,
+      rateLimitRetries: telemetry.filter((event) => event.type === "rate_limit_retry").length,
       droppedFrames,
     },
   };

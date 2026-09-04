@@ -97,7 +97,9 @@ export interface TuiLogEntry {
   readonly timestamp: string;
   readonly level: TuiLogLevel;
   readonly source?: string;
+  readonly event?: string;
   readonly message: string;
+  readonly details?: unknown;
 }
 
 export interface TuiArchivedSession {
@@ -136,6 +138,9 @@ export interface TuiNotification {
   readonly id: string;
   readonly kind: "success" | "info" | "error";
   readonly message: string;
+  readonly detail?: string;
+  readonly persistent?: boolean;
+  readonly progress?: number;
 }
 
 export interface TuiModelHealth {

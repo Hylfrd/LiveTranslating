@@ -23,6 +23,7 @@ import type {
   DesktopWindowCommand,
 } from "../preload/contract.js";
 import { dispatchControllerAction } from "./controller-actions.js";
+import { resolveRuntimeRoot } from "./runtime-root.js";
 
 const SNAPSHOT_GET_CHANNEL = "live-translating:snapshot:get";
 const SNAPSHOT_UPDATED_CHANNEL = "live-translating:snapshot:updated";
@@ -33,6 +34,7 @@ const ARCHIVE_MANAGE_CHANNEL = "live-translating:archive:manage";
 const WINDOW_COMMANDS = new Set<DesktopWindowCommand>([
   "open-overlay",
   "open-logs",
+  "open-log-folder",
   "expand-overlay",
   "minimize",
   "close",
@@ -80,7 +82,12 @@ if (!singleInstance) {
 
 async function bootstrap(): Promise<void> {
   app.setAppUserModelId("com.hylfrd.live-translating");
-  const rootDirectory = resolveRuntimeRoot();
+  const rootDirectory = resolveRuntimeRoot({
+    isPackaged: app.isPackaged,
+    cwd: process.cwd(),
+    execPath: process.execPath,
+    environment: process.env,
+  });
   loadEnvironment(app.isPackaged ? path.dirname(process.execPath) : rootDirectory);
 
   const module = await import("../../app/application-controller.js");
@@ -388,6 +395,9 @@ async function controlWindow(sender: BrowserWindow, command: DesktopWindowComman
     case "open-logs":
       await openLogs();
       break;
+    case "open-log-folder":
+      await openExternalPath(requireController().logDirectory());
+      break;
     case "expand-overlay":
       expandOverlay();
       break;
@@ -535,10 +545,6 @@ function requireController(): ApplicationController {
     throw new Error("Application controller is not ready");
   }
   return controller;
-}
-
-function resolveRuntimeRoot(): string {
-  return app.isPackaged ? path.dirname(process.execPath) : process.cwd();
 }
 
 function loadEnvironment(rootDirectory: string): void {

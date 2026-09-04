@@ -42,14 +42,14 @@ export class FfmpegWhisperSession {
     const whisper = [
       `whisper=model=${escapeFilterPath(this.models.whisper)}`,
       `language=${this.language}`,
-      "queue=4",
+      "queue=2",
       "destination=-",
       "format=srt",
       "max_len=140",
       `vad_model=${escapeFilterPath(this.models.vad)}`,
       "vad_threshold=0.5",
       "vad_min_speech_duration=0.25",
-      "vad_min_silence_duration=0.65",
+      "vad_min_silence_duration=0.4",
     ].join(":");
     const filter = this.sourceId === "microphone"
       ? `highpass=f=80,lowpass=f=7600,afftdn=nr=12:nf=-40:tn=1,${whisper}`
@@ -150,7 +150,20 @@ export class FfmpegWhisperSession {
       await terminateChild(child, false);
       throw error;
     }
-    this.logger.info(`Whisper ready (${this.language})`, `asr:${this.sourceId}`);
+    this.logger.info(
+      `Whisper ready (${this.language})`,
+      `asr:${this.sourceId}`,
+      {
+        language: this.language,
+        queueSeconds: 2,
+        vadThreshold: 0.5,
+        vadMinimumSpeechSeconds: 0.25,
+        vadMinimumSilenceSeconds: 0.4,
+        model: this.models.whisper,
+        vadModel: this.models.vad,
+      },
+      "asr.session.ready",
+    );
   }
 
   write(samples: Float32Array, capturedAt = performance.now()): boolean {
@@ -210,13 +223,25 @@ export class FfmpegWhisperSession {
       .trim();
     if (text) {
       const base = this.streamStartedAt ?? Date.now();
-      this.onTranscript({
+      const transcript: AsrTranscript = {
         sourceId: this.sourceId,
         text,
         receivedAt: performance.now(),
         speechStartedAt: base + (timing?.startMs ?? 0),
         speechEndedAt: base + (timing?.endMs ?? timing?.startMs ?? 0),
-      });
+      };
+      this.logger.debug(
+        "Whisper transcript emitted",
+        `asr:${this.sourceId}`,
+        {
+          text,
+          timing,
+          speechDurationMs: transcript.speechEndedAt - transcript.speechStartedAt,
+          latencyAfterSpeechMs: Math.max(0, Date.now() - transcript.speechEndedAt),
+        },
+        "asr.transcript.raw",
+      );
+      this.onTranscript(transcript);
     }
   }
 }

@@ -48,11 +48,11 @@ export class TranscriptAssembler {
     private readonly onTranscript: (transcript: AsrTranscript) => void,
     options: TranscriptAssemblerOptions = {},
   ) {
-    this.idleFlushMs = options.idleFlushMs ?? 5000;
+    this.idleFlushMs = options.idleFlushMs ?? 2200;
     this.maxGapMs = options.maxGapMs ?? 1800;
-    this.maxSpanMs = options.maxSpanMs ?? 12000;
-    this.hardMaxSpanMs = options.hardMaxSpanMs ?? 18000;
-    this.maxWords = options.maxWords ?? 70;
+    this.maxSpanMs = options.maxSpanMs ?? 9000;
+    this.hardMaxSpanMs = options.hardMaxSpanMs ?? 13000;
+    this.maxWords = options.maxWords ?? 50;
     this.minimumSentenceWords = options.minimumSentenceWords ?? 4;
   }
 

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Bug, CircleAlert, Info, Radio, Search } from "lucide-react";
+import { AlertCircle, Bug, CircleAlert, FolderOpen, Info, Radio, Search } from "lucide-react";
 
 import type { TuiLogLevel } from "../../tui/controller.js";
+import { IconButton } from "./ui.js";
 import { useDesktopBridge } from "./use-desktop-bridge.js";
 
 const LEVELS: ReadonlyArray<{
@@ -16,12 +17,12 @@ const LEVELS: ReadonlyArray<{
 ];
 
 export function LogApp() {
-  const { snapshot, loading, error, clearError } = useDesktopBridge();
+  const { snapshot, loading, error, clearError, controlWindow } = useDesktopBridge();
   const [levels, setLevels] = useState<Record<TuiLogLevel, boolean>>({
     error: true,
     warn: true,
     info: true,
-    debug: false,
+    debug: true,
   });
   const [source, setSource] = useState("all");
   const [query, setQuery] = useState("");
@@ -32,7 +33,7 @@ export function LogApp() {
   const entries = useMemo(() => (snapshot?.logs ?? [])
     .filter((entry) => levels[entry.level])
     .filter((entry) => source === "all" || (entry.source ?? "app") === source)
-    .filter((entry) => !normalizedQuery || `${entry.source ?? "app"} ${entry.message}`.toLocaleLowerCase().includes(normalizedQuery))
+    .filter((entry) => !normalizedQuery || `${entry.source ?? "app"} ${entry.event ?? ""} ${entry.message} ${stringifyDetails(entry.details)}`.toLocaleLowerCase().includes(normalizedQuery))
     .slice()
     .reverse(), [levels, normalizedQuery, snapshot?.logs, source]);
   const latestId = snapshot?.logs.at(-1)?.id;
@@ -49,7 +50,7 @@ export function LogApp() {
   return (
     <main className="log-app">
       <header className="log-toolbar">
-        <div className="log-title"><Radio aria-hidden="true" /><div><h1>运行日志</h1><span>{snapshot?.logs.length ?? 0} 条记录</span></div></div>
+        <div className="log-title"><Radio aria-hidden="true" /><div><h1>运行日志</h1><span>{snapshot?.logs.length ?? 0} 条记录</span></div><IconButton icon={FolderOpen} label="打开日志文件夹" onClick={() => void controlWindow("open-log-folder")} /></div>
         <label className="log-search"><Search aria-hidden="true" /><input value={query} placeholder="搜索来源或消息" aria-label="搜索日志" onChange={(event) => setQuery(event.target.value)} /></label>
         <select value={source} aria-label="筛选日志来源" onChange={(event) => setSource(event.target.value)}>
           <option value="all">全部来源</option>
@@ -80,13 +81,40 @@ export function LogApp() {
           <div className="log-empty"><Search aria-hidden="true" /><strong>没有匹配的日志</strong><span>调整等级、来源或搜索条件。</span></div>
         ) : entries.map((entry, index) => (
           <article className={`log-entry log-entry--${entry.level}${index === 0 ? " is-latest" : ""}`} key={entry.id}>
-            <time>{entry.timestamp}</time>
+            <time title={entry.timestamp}>{formatLogTime(entry.timestamp)}</time>
             <span className="log-entry__level">{entry.level === "warn" ? "警告" : entry.level === "error" ? "错误" : entry.level === "debug" ? "调试" : "信息"}</span>
-            <strong title={entry.source ?? "app"}>{entry.source ?? "app"}</strong>
-            <p>{entry.message}</p>
+            <div className="log-entry__source"><strong title={entry.source ?? "app"}>{entry.source ?? "app"}</strong>{entry.event ? <small>{entry.event}</small> : null}</div>
+            <div className="log-entry__message">
+              <p>{entry.message}</p>
+              {entry.details === undefined ? null : (
+                <details>
+                  <summary>查看原始 JSON</summary>
+                  <pre>{stringifyDetails(entry.details)}</pre>
+                </details>
+              )}
+            </div>
           </article>
         ))}
       </div>
     </main>
   );
+}
+
+function formatLogTime(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  return date.toLocaleTimeString("zh-CN", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function stringifyDetails(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2) ?? String(value);
+  } catch {
+    return "[无法序列化的日志详情]";
+  }
 }
