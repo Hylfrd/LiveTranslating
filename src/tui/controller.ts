@@ -78,6 +78,7 @@ export interface TuiSubtitleEntry {
   readonly timestamp: string;
   readonly sourceText: string;
   readonly translation: string;
+  readonly translationFailed?: boolean;
   readonly revisedTranslation?: string;
   readonly translationOmitted?: boolean;
   readonly isFinal: boolean;

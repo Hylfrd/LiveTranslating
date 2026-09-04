@@ -480,8 +480,7 @@ class ProviderRuntime {
       try {
         return await operation();
       } catch (error) {
-        const maximumRetries = this.settings.vendor === "tencent" ? 0 : MAX_RATE_LIMIT_RETRIES;
-        if (!isRateLimitError(error) || attempt >= maximumRetries) {
+        if (!isRateLimitError(error) || attempt >= MAX_RATE_LIMIT_RETRIES) {
           throw error;
         }
         const exponential = RATE_LIMIT_BASE_DELAY_MS * 2 ** attempt;

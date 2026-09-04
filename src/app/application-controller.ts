@@ -114,7 +114,8 @@ export class ApplicationController implements TuiController {
   private readonly translator = new OpenAICompatibleTranslationProvider(config.translation);
   private readonly asrSessions = new Map<AudioSourceId, FfmpegWhisperSession>();
   private readonly transcriptAssemblers = new Map<AudioSourceId, TranscriptAssembler>();
-  private readonly translationQueues = new Map<AudioSourceId, Promise<void>>();
+  private readonly translationTasks = new Set<Promise<void>>();
+  private readonly translationTasksBySource = new Map<AudioSourceId, Set<Promise<void>>>();
   private readonly translationControllers = new Map<string, AbortController>();
   private readonly reviewControllers = new Map<string, AbortController>();
   private readonly reviewTasks = new Set<Promise<void>>();
@@ -243,7 +244,7 @@ export class ApplicationController implements TuiController {
         deviceIds: microphone.deviceId ? [microphone.deviceId] : [],
       },
     };
-    this.systemAudioApplications = await listSystemAudioApplications();
+    this.systemAudioApplications = await listSystemAudioApplications(this.logger);
     const savedSources = await this.sourceStore.load().catch((error) => {
       this.logger.warn(`Saved sources could not be loaded: ${String(error)}`, "sources");
       return [];
@@ -333,7 +334,7 @@ export class ApplicationController implements TuiController {
 
   async refreshSourceCatalog(): Promise<void> {
     const [applications] = await Promise.all([
-      listSystemAudioApplications(),
+      listSystemAudioApplications(this.logger),
       Promise.resolve(this.audio.listMicrophones()),
     ]);
     this.systemAudioApplications = applications;
@@ -746,7 +747,8 @@ export class ApplicationController implements TuiController {
       });
       this.running = false;
       await this.drainProcessing();
-      this.translationQueues.clear();
+      this.translationTasks.clear();
+      this.translationTasksBySource.clear();
       this.closed = true;
       for (const controller of this.reviewControllers.values()) {
         controller.abort();
@@ -1017,12 +1019,12 @@ export class ApplicationController implements TuiController {
     if (this.closed) {
       return;
     }
-    const previous = this.translationQueues.get(entry.sourceId) ?? Promise.resolve();
-    const current = previous
-      .then(() => this.translateEntry(entry, settings))
+    const sourceTasks = this.translationTasksBySource.get(entry.sourceId) ?? new Set<Promise<void>>();
+    this.translationTasksBySource.set(entry.sourceId, sourceTasks);
+    const task = this.translateEntry(entry, settings)
       .catch((error) => {
         if (!this.closed) {
-          this.updateSubtitle(entry.id, { translation: "翻译失败，请查看运行日志" });
+          this.updateSubtitle(entry.id, { translation: "", translationFailed: true });
           this.logger.error(
             `Translation failed: ${error instanceof Error ? error.message : String(error)}`,
             entry.sourceId,
@@ -1037,11 +1039,15 @@ export class ApplicationController implements TuiController {
         }
       })
       .finally(() => {
-        if (this.translationQueues.get(entry.sourceId) === current) {
-          this.translationQueues.delete(entry.sourceId);
+        this.translationTasks.delete(task);
+        sourceTasks.delete(task);
+        if (sourceTasks.size === 0) {
+          this.translationTasksBySource.delete(entry.sourceId);
         }
       });
-    this.translationQueues.set(entry.sourceId, current);
+    this.translationTasks.add(task);
+    sourceTasks.add(task);
+    void task;
   }
 
   private async translateEntry(
@@ -1079,7 +1085,7 @@ export class ApplicationController implements TuiController {
       if (primary.result) {
         initial = primary.result;
         this.billing.record(initial.model, initial.usage);
-        await this.commitInitialTranslation(entry, initial, settings, contexts, started);
+        await this.commitInitialTranslation(entry, initial, settings, started);
       }
       const secondary = secondaryTask ? await secondaryTask : undefined;
       if (secondary?.result) {
@@ -1087,7 +1093,7 @@ export class ApplicationController implements TuiController {
       }
       if (!initial && secondary?.result) {
         initial = secondary.result;
-        await this.commitInitialTranslation(entry, initial, settings, contexts, started);
+        await this.commitInitialTranslation(entry, initial, settings, started);
       }
       if (!initial) {
         throw new AggregateError(
@@ -1108,14 +1114,13 @@ export class ApplicationController implements TuiController {
     entry: TuiSubtitleEntry,
     result: TranslationResult,
     settings: TranslationJobSettings,
-    contexts: readonly ContextTurn[],
     started: number,
   ): Promise<void> {
     if (this.closed || settings.revision !== this.settingsRevision) return;
     this.sourceState(entry.sourceId).latencyMs = performance.now() - started;
     this.updateSubtitle(entry.id, { translation: result.text });
     const turn: ContextTurn = { id: entry.id, source: entry.sourceText, translation: result.text };
-    this.contexts.set(entry.sourceId, [...contexts.slice(-7), turn]);
+    this.storeContext(entry.sourceId, turn);
     await this.appendRecordingTranscript(
       { ...entry, translation: result.text },
       settings.recordingSessionId,
@@ -1216,12 +1221,28 @@ export class ApplicationController implements TuiController {
 
   private updateSubtitle(
     id: string,
-    update: Partial<Pick<TuiSubtitleEntry, "translation" | "revisedTranslation">>,
+    update: Partial<Pick<TuiSubtitleEntry, "translation" | "revisedTranslation" | "translationFailed">>,
   ): void {
     this.subtitles = this.subtitles.map((entry) =>
       entry.id === id ? { ...entry, ...update } : entry,
     );
     this.emit();
+  }
+
+  private storeContext(sourceId: AudioSourceId, turn: ContextTurn): void {
+    const subtitleOrder = new Map(
+      this.subtitles
+        .filter((entry) => entry.sourceId === sourceId)
+        .map((entry, index) => [entry.id, index] as const),
+    );
+    const contexts = (this.contexts.get(sourceId) ?? [])
+      .filter((entry) => entry.id !== turn.id);
+    this.contexts.set(
+      sourceId,
+      [...contexts, turn]
+        .sort((left, right) => (subtitleOrder.get(left.id) ?? 0) - (subtitleOrder.get(right.id) ?? 0))
+        .slice(-8),
+    );
   }
 
   private async appendRecordingTranscript(
@@ -1343,9 +1364,9 @@ export class ApplicationController implements TuiController {
 
   private async drainProcessing(sourceId?: AudioSourceId): Promise<void> {
     if (sourceId) {
-      while (this.translationQueues.has(sourceId)) {
-        const task = this.translationQueues.get(sourceId);
-        if (task) await Promise.allSettled([task]);
+      const translations = this.translationTasksBySource.get(sourceId);
+      while (translations && translations.size > 0) {
+        await Promise.allSettled([...translations]);
       }
       const reviews = this.reviewTasksBySource.get(sourceId);
       while (reviews && reviews.size > 0) {
@@ -1353,8 +1374,8 @@ export class ApplicationController implements TuiController {
       }
       return;
     }
-    while (this.translationQueues.size > 0) {
-      await Promise.allSettled([...this.translationQueues.values()]);
+    while (this.translationTasks.size > 0) {
+      await Promise.allSettled([...this.translationTasks]);
     }
     while (this.reviewTasks.size > 0) {
       await Promise.allSettled([...this.reviewTasks]);

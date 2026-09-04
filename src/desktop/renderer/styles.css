@@ -1921,12 +1921,6 @@ select:disabled {
   pointer-events: none;
 }
 
-.toast-stack.has-persistent {
-  top: auto;
-  right: 318px;
-  bottom: 18px;
-}
-
 .toast {
   position: relative;
   display: grid;
@@ -2703,9 +2697,6 @@ html[data-surface="compact"][data-preview="true"] #root {
     grid-template-columns: minmax(0, 1fr) 48px;
   }
 
-  .toast-stack.has-persistent {
-    right: 288px;
-  }
 }
 
 @media (max-width: 760px) {
@@ -2851,10 +2842,6 @@ html[data-surface="compact"][data-preview="true"] #root {
 
   .archive-bundle__header {
     align-items: flex-start;
-  }
-
-  .toast-stack.has-persistent {
-    right: 18px;
   }
 
   .modal-backdrop {

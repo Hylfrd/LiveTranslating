@@ -211,7 +211,7 @@ function ToastStack({
 }) {
   if (!bridgeError && !sourceError && notifications.length === 0) return null;
   return (
-    <div className={`toast-stack${notifications.some((notification) => notification.persistent) ? " has-persistent" : ""}`}>
+    <div className="toast-stack">
       {bridgeError ? <Toast kind="error" message={bridgeError} onDismiss={onDismissBridge} /> : null}
       {sourceError ? <Toast kind="error" message={sourceError} onDismiss={onDismissSource} /> : null}
       {notifications.map((notification) => (
@@ -446,20 +446,20 @@ function TranscriptReader({
   readonly targetLanguage: string;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const stickToBottom = useRef(true);
+  const stickToTop = useRef(true);
   const sourceEntries = useMemo(() => entries.filter((entry) => entry.sourceId === sourceId).slice(-160), [entries, sourceId]);
-  const paragraphs = useMemo<TranscriptParagraph[]>(() => backendParagraphs
+  const paragraphs = useMemo<TranscriptParagraph[]>(() => (backendParagraphs
     ? backendParagraphs.map((paragraph) => ({ id: paragraph.id, entries: paragraph.sentences }))
-    : groupIntoParagraphs(sourceEntries), [backendParagraphs, sourceEntries]);
+    : groupIntoParagraphs(sourceEntries)).reverse(), [backendParagraphs, sourceEntries]);
   const latest = sourceEntries.at(-1);
   useEffect(() => {
-    if (stickToBottom.current && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (stickToTop.current && scrollRef.current) scrollRef.current.scrollTop = 0;
   }, [sourceEntries.length, latest?.sourceText, latest?.translation, latest?.revisedTranslation]);
   const latestAnnounced = latest?.translationOmitted ? "" : (latest?.revisedTranslation ?? latest?.translation ?? "");
   return (
     <div className="transcript-reader" ref={scrollRef} onScroll={() => {
       const element = scrollRef.current;
-      if (element) stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 72;
+      if (element) stickToTop.current = element.scrollTop < 72;
     }} tabIndex={0}>
       {paragraphs.length === 0 ? (
         <div className="transcript-empty">
@@ -470,13 +470,17 @@ function TranscriptReader({
       ) : (
         <div className="paragraph-flow">
           {paragraphs.map((paragraph) => {
-            const translations = paragraph.entries.filter((entry) => !entry.translationOmitted).map((entry) => (entry.revisedTranslation ?? entry.translation) || "正在翻译…");
+            const translationEntries = paragraph.entries.filter((entry) => !entry.translationOmitted);
+            const translations = translationEntries
+              .filter((entry) => !entry.translationFailed)
+              .map((entry) => (entry.revisedTranslation ?? entry.translation) || "正在翻译…");
             return (
               <article className="transcript-paragraph" key={paragraph.id}>
                 <div className="paragraph-meta">
                   <time>{paragraph.entries[0]?.timestamp}</time>
                   {paragraph.entries.some((entry) => entry.revisedTranslation && entry.revisedTranslation !== entry.translation) ? <span><ShieldCheck aria-hidden="true" />已复核</span> : null}
                   {paragraph.entries.every((entry) => entry.translationOmitted) ? <span>目标语言原文</span> : null}
+                  {translationEntries.some((entry) => entry.translationFailed) ? <span>翻译暂不可用</span> : null}
                 </div>
                 <p className="paragraph-source" lang={sourceLanguage === "auto" ? undefined : sourceLanguage}>{joinSubtitleParts(paragraph.entries.map((entry) => entry.sourceText || "正在识别…"), sourceLanguage)}</p>
                 {translations.length > 0 ? <p className="paragraph-translation" lang={targetLanguage}>{joinSubtitleParts(translations, targetLanguage)}</p> : null}

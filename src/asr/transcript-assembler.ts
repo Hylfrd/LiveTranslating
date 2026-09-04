@@ -18,6 +18,7 @@ interface PendingTranscript extends AsrTranscript {
 
 const NON_SPEECH = /^\[\s*(?:blank_audio|silence|music|pause|applause|laughter|noise)\s*\]$/iu;
 const FILLER_ONLY = /^(?:okay|ok|um+|uh+|hmm+)[,.!?;:，。！？；：]*$/iu;
+const CONNECTOR_ONLY = /^(?:and|or|but|because|if|that|which|of|to|the|a|an|is|are|was|were)[,.!?;:，。！？；：]*$/iu;
 const ABBREVIATION = /\b(?:Mr|Mrs|Ms|Dr|Prof|vs|etc|e\.g|i\.e|U\.S|U\.K)\.$/u;
 const NUMBER_WORDS: Readonly<Record<string, string>> = {
   zero: "0",
@@ -53,7 +54,7 @@ export class TranscriptAssembler {
     this.maxSpanMs = options.maxSpanMs ?? 9000;
     this.hardMaxSpanMs = options.hardMaxSpanMs ?? 13000;
     this.maxWords = options.maxWords ?? 50;
-    this.minimumSentenceWords = options.minimumSentenceWords ?? 4;
+    this.minimumSentenceWords = options.minimumSentenceWords ?? 2;
   }
 
   push(transcript: AsrTranscript): void {
@@ -199,7 +200,9 @@ export class TranscriptAssembler {
 
 export function cleanAsrText(text: string): string {
   const cleaned = text.replace(/\s+/gu, " ").trim();
-  return NON_SPEECH.test(cleaned) || FILLER_ONLY.test(cleaned) ? "" : cleaned;
+  return NON_SPEECH.test(cleaned) || FILLER_ONLY.test(cleaned) || CONNECTOR_ONLY.test(cleaned)
+    ? ""
+    : cleaned;
 }
 
 function findSentenceBoundary(text: string, minimumWords: number): number | undefined {

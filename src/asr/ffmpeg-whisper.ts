@@ -42,7 +42,7 @@ export class FfmpegWhisperSession {
     const whisper = [
       `whisper=model=${escapeFilterPath(this.models.whisper)}`,
       `language=${this.language}`,
-      "queue=2",
+      "queue=1",
       "destination=-",
       "format=srt",
       "max_len=140",
@@ -155,7 +155,7 @@ export class FfmpegWhisperSession {
       `asr:${this.sourceId}`,
       {
         language: this.language,
-        queueSeconds: 2,
+        queueSeconds: 1,
         vadThreshold: 0.5,
         vadMinimumSpeechSeconds: 0.25,
         vadMinimumSilenceSeconds: 0.4,

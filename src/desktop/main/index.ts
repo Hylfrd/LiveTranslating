@@ -88,10 +88,30 @@ async function bootstrap(): Promise<void> {
     execPath: process.execPath,
     environment: process.env,
   });
-  loadEnvironment(app.isPackaged ? path.dirname(process.execPath) : rootDirectory);
+  loadEnvironment(rootDirectory);
 
   const module = await import("../../app/application-controller.js");
   controller = await module.createApplicationController(rootDirectory);
+
+  if (process.env.LIVE_TRANSLATING_DESKTOP_SMOKE === "1") {
+    const snapshot = controller.getSnapshot();
+    console.log(JSON.stringify({
+      version: app.getVersion(),
+      rootDirectory,
+      microphoneCount: snapshot.microphoneDevices.length,
+      activeSystemAudioApplications: snapshot.systemAudioApplications
+        .filter((application) => application.active)
+        .map((application) => ({
+          name: application.name,
+          processIds: application.processIds,
+        })),
+    }));
+    await controller.shutdown();
+    controller = undefined;
+    quitting = true;
+    app.quit();
+    return;
+  }
 
   registerIpcHandlers();
   createWindows();

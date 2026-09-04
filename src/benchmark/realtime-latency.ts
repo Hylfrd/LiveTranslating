@@ -59,7 +59,6 @@ try {
   const translationJobs: Promise<void>[] = [];
   const reviewJobs: Promise<void>[] = [];
   const contexts: Array<{ source: string; translation: string }> = [];
-  let translationTail = Promise.resolve();
   let asrFailure: Error | undefined;
   let droppedFrames = 0;
 
@@ -71,7 +70,7 @@ try {
       emittedAt: Date.now(),
     };
     records.push(record);
-    const job = translationTail.then(async () => {
+    const job = (async () => {
       record.queueStartedAt = Date.now();
       try {
         const result = await provider.translate({
@@ -106,8 +105,7 @@ try {
       } catch (error) {
         record.translationError = errorMessage(error);
       }
-    });
-    translationTail = job.catch(() => undefined);
+    })();
     translationJobs.push(job);
   });
 
