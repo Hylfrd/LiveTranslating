@@ -183,12 +183,14 @@ export function TuiApp({ controller, title = "LiveTranslating", onError }: TuiAp
   useEffect(() => controller.subscribe(setSnapshot), [controller]);
 
   const menuItems = useMemo<readonly MenuItem[]>(() => {
+    const system = snapshot.sources.system;
     const microphone = snapshot.sources.microphone;
+    if (!system || !microphone) return [];
     return [
       {
         id: "system",
         label: "System audio",
-        value: boolLabel(snapshot.sources.system.enabled),
+        value: boolLabel(system.enabled),
       },
       {
         id: "microphone",
@@ -321,9 +323,9 @@ export function TuiApp({ controller, title = "LiveTranslating", onError }: TuiAp
     } else if (input === "p") {
       runAction(async () => {
         for (const sourceId of ["system", "microphone"] as const) {
-          if (snapshot.sessions[sourceId].phase === "paused") {
+          if (snapshot.sessions[sourceId]?.phase === "paused") {
             await controller.resumeSession(sourceId);
-          } else if (snapshot.sessions[sourceId].phase === "recording") {
+          } else if (snapshot.sessions[sourceId]?.phase === "recording") {
             await controller.pauseSession(sourceId);
           }
         }
@@ -364,8 +366,8 @@ export function TuiApp({ controller, title = "LiveTranslating", onError }: TuiAp
         <Text color={tuiColors.warning}>Applying action...</Text>
       ) : null}
       <Box marginTop={1}>
-        <SourcePanel source={snapshot.sources.system} />
-        <SourcePanel source={snapshot.sources.microphone} />
+        {snapshot.sources.system ? <SourcePanel source={snapshot.sources.system} /> : null}
+        {snapshot.sources.microphone ? <SourcePanel source={snapshot.sources.microphone} /> : null}
       </Box>
 
       <Box flexDirection="column" borderStyle="single" borderColor={tuiColors.dim} paddingX={1} marginTop={1}>

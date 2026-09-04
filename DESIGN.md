@@ -26,6 +26,18 @@ typography:
     fontWeight: 700
     lineHeight: 1.2
     letterSpacing: "0"
+  source-title:
+    fontFamily: "Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, sans-serif"
+    fontSize: "15px"
+    fontWeight: 700
+    lineHeight: 1.2
+    letterSpacing: "0"
+  dialog-title:
+    fontFamily: "Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, sans-serif"
+    fontSize: "17px"
+    fontWeight: 700
+    lineHeight: 1.2
+    letterSpacing: "0"
   body:
     fontFamily: "Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, sans-serif"
     fontSize: "14px"
@@ -50,12 +62,24 @@ typography:
     fontWeight: 600
     lineHeight: 1.45
     letterSpacing: "0"
+  responsive-translation:
+    fontFamily: "Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, sans-serif"
+    fontSize: "20px"
+    fontWeight: 620
+    lineHeight: 1.62
+    letterSpacing: "0"
+  compact-translation:
+    fontFamily: "Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, sans-serif"
+    fontSize: "24px"
+    fontWeight: 650
+    lineHeight: 1.4
+    letterSpacing: "0"
 rounded:
-  meter: "1px"
   compact: "4px"
   control: "5px"
   feedback: "6px"
   surface: "7px"
+  dialog: "8px"
   status: "999px"
 spacing:
   xs: "4px"
@@ -102,7 +126,7 @@ The compact window preserves the same hierarchy at smaller scale: subdued source
 - White and cool-gray work surfaces with near-black text.
 - Listening teal is reserved for active state and primary action.
 - Bilingual paragraphs, not isolated translation cards, are the main content unit.
-- Each source page owns its transport and archive controls; the two sources never share panel state.
+- Each configured source page owns its transport and archive controls; source state never leaks between pages.
 - Borders establish structure; shadows are reserved for transient or detached surfaces.
 
 ## Colors
@@ -117,10 +141,10 @@ The palette is neutral first, with listening teal, tally red, warning amber, and
 
 The application uses the Windows-native Segoe UI Variable stack, with Microsoft YaHei UI for Chinese fallback, as defined in [styles.css](src/desktop/renderer/styles.css). Letter spacing remains zero.
 
-- Titles use 14-16px at weight 700.
+- Titles use 14-17px at weight 700.
 - Labels and metadata never fall below 12px.
 - Source paragraphs use 14px with a 1.72 line height and muted ink.
-- Main translations use 22px at weight 620 with a 1.62 line height.
+- Main translations use 22px at weight 620 with a 1.62 line height and step down to 20px in the narrow workspace.
 - Compact latest translations use 24px at weight 650.
 
 **The Translation Leads Rule.** Source text remains readable but subordinate; translated text receives the strongest weight and scale on every subtitle surface.
@@ -129,7 +153,9 @@ The application uses the Windows-native Segoe UI Variable stack, with Microsoft 
 
 The large window is a two-column grid: a 224px sidebar and a fluid content field. Source pages divide the fluid field into a transcript and a 300px archive rail, which can collapse to 48px. At 1040px the sidebar contracts to 190px and the archive rail to 270px; at 760px navigation becomes a 72px icon rail. These breakpoints and dimensions are defined in [styles.css](src/desktop/renderer/styles.css).
 
-Each source owns a separate page, session lifecycle, subtitle flow, and archive panel. The 72px header contains identity, device, level, latency, dropped frames, and play/pause/stop transport. Paragraph content is centered to 820px with a maximum text measure of 74 characters. Settings use one unframed 960px sheet with ruled sections.
+Each source owns a separate page, session lifecycle, subtitle flow, and archive panel. The sidebar divides into a fixed brand row, a scrollable source list, a fixed Add source command, and bottom utilities. The 72px source header contains identity, a single factual selection summary, latency, dropped frames, and play/pause/stop transport; audio meters are intentionally absent. At the 760px icon-rail breakpoint, the selection summary moves beneath the source name and metadata recedes without increasing header height. Paragraph content is centered to 820px with a maximum text measure of 74 characters. Settings use one unframed 960px sheet with ruled sections.
+
+The Add source dialog is the only protected-focus configuration surface. It keeps type, name, icon, and concrete input selection in that order; the selection body scrolls independently while header and footer remain reachable. Computer and microphone inputs share the same dense multi-select row pattern, and lists above ten entries add filtering without changing source semantics.
 
 The compact surface is designed for a 760x320 window. Its 34px custom title bar remains fixed above a scrolling subtitle stack that keeps the latest three entries at the bottom.
 
@@ -147,7 +173,7 @@ Controls use restrained 5px corners, small identity surfaces use 7px corners, an
 
 Buttons and fields use stable heights so status changes do not shift layout. The 36px play command uses listening teal; pause and stop replace it without resizing the header. Secondary commands stay white with a cool rule. Icon-only controls use Lucide icons and always expose `aria-label` and `title` through [ui.tsx](src/desktop/renderer/ui.tsx).
 
-Navigation is a dense vertical list with a dark active row, muted inactive rows, and one 7px semantic status dot per source. Toggles use a 38x22px track, a 16px white thumb, and semantic `role="switch"` state.
+Navigation is a dense, scrollable vertical list with a dark active row, muted inactive rows, and one 7px semantic status dot per source. The dashed Add source command stays below the list instead of scrolling away. Toggles use a 38x22px track, a 16px white thumb, and semantic `role="switch"` state.
 
 Transcript paragraphs are unframed. Timestamp and review state form a 12px metadata row, followed by muted source text and the larger translation. Toasts are the only in-app error prompt and leave via transform and opacity without reflowing the page.
 
@@ -157,7 +183,8 @@ The source archive rail is a full-height utility surface rather than a floating 
 
 ### Do
 
-- **Do** keep computer audio and microphone content on independent pages.
+- **Do** give every computer, microphone, and LAN source an independent page.
+- **Do** keep long source names on one line with ellipsis and preserve their full name in accessible labels and tooltips.
 - **Do** group committed sentences into continuous bilingual paragraphs.
 - **Do** keep play/pause/stop and archive state independent for each source page.
 - **Do** keep operational metadata at 12px or larger and use tabular numerals for time and latency.
@@ -172,7 +199,9 @@ The source archive rail is a full-height utility surface rather than a floating 
 
 ### Per-page checklist
 
-- [ ] One active source page fills the content surface; the other source is reachable from the sidebar.
+- [ ] One active source page fills the content surface; every other source is reachable from the scrollable sidebar.
+- [ ] Add source stays visible below the source list and Settings stays fixed at the bottom.
+- [ ] The source header contains no decorative audio meter and remains exactly 72px at supported breakpoints.
 - [ ] Translation remains the largest content text and wraps without overlap.
 - [ ] The source header shows only play while idle, then pause/resume and stop while active.
 - [ ] The current source's archive rail can collapse and reopen without resizing its controls.

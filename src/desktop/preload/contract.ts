@@ -1,6 +1,7 @@
 import type {
   TuiSnapshot,
   TuiReviewModel,
+  TuiNewSourceInput,
   TuiSourceId,
   TuiTranslationModel,
 } from "../../tui/controller.js";
@@ -30,7 +31,9 @@ export type DesktopActionName =
   | "test-models"
   | "set-archive-name"
   | "refresh-pricing"
-  | "dismiss-notification";
+  | "dismiss-notification"
+  | "add-source"
+  | "refresh-source-catalog";
 
 export type DesktopActionPayload =
   | { readonly sourceId: TuiSourceId }
@@ -43,7 +46,8 @@ export type DesktopActionPayload =
   | { readonly model: TuiTranslationModel }
   | { readonly reviewModel: TuiReviewModel }
   | { readonly name: string }
-  | { readonly notificationId: string };
+  | { readonly notificationId: string }
+  | { readonly source: TuiNewSourceInput };
 
 export type DesktopExportKind = "audio" | "transcription" | "translation";
 

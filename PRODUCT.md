@@ -4,7 +4,7 @@
 
 ## Platform
 
-Windows desktop
+web
 
 ## Stack
 
@@ -20,8 +20,8 @@ translation with domain terminology preserved.
 
 ## Product Purpose
 
-LiveTranslating captures Windows system audio or a selected microphone in
-independent sessions, transcribes mixed-language speech locally, translates only
+LiveTranslating turns one or more selected Windows applications, microphones, or
+LAN browser streams into independent named sessions, transcribes mixed-language speech locally, translates only
 the parts not already in the target language, optionally reviews them
 asynchronously, and preserves per-source archives and usage estimates.
 Success means translated lecture speech is readable within a few seconds without
@@ -29,8 +29,8 @@ interrupting the source application.
 
 ## Positioning
 
-One local pipeline presents the same independently processed system and
-microphone sources through a full control workspace, a compact subtitle window,
+One local pipeline presents independently processed, user-defined audio sources
+through a full control workspace, a compact subtitle window,
 and a terminal interface, while keeping recording, logs, short-lived source
 context, and delayed revision state consistent across all surfaces.
 
@@ -46,7 +46,9 @@ context, and delayed revision state consistent across all surfaces.
 
 - Preserve the existing Node.js backend and Ink TUI.
 - Add a large white desktop control window and a compact translucent-gray subtitle window.
-- Keep system audio and microphone independently selectable and concurrently usable.
+- Keep every computer, microphone, and LAN source independently selectable and concurrently usable.
+- Let users add named sources with preset icons, select all computer audio or multiple
+  active applications, and combine multiple microphones into one logical source.
 - Expose microphone device, target language, Hy-MT2 translation model, parallel
   translation, two-stage DeepSeek review, model health, token/cost estimates,
   continuous subtitle paragraphs, per-source archives, exports, and structured logs.

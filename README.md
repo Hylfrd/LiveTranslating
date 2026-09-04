@@ -1,7 +1,7 @@
 # LiveTranslating
 
-Windows desktop and terminal application for capturing system audio and microphone audio,
-transcribing each source independently, and translating committed speech.
+Windows desktop and terminal application for combining selected computer applications,
+microphones, or a LAN browser into independently transcribed and translated audio sources.
 
 Requires Node.js 24 or newer. Runtime scripts enable Node's environment-proxy
 support so model downloads also work on proxied networks.
@@ -9,8 +9,8 @@ support so model downloads also work on proxied networks.
 ## Pipeline
 
 ```text
-WASAPI system audio / selected microphone
-  -> 16 kHz mono Float32 PCM
+all Windows audio / selected application sessions / selected microphones / LAN browser
+  -> per-source 100 ms mixer -> 16 kHz mono Float32 PCM
   -> FFmpeg Whisper large-v3-turbo Q8 + Silero VAD
   -> multilingual sentence aggregation with target-language duplicate suppression
   -> Hy-MT2 Plus or Pro, with optional parallel fallback candidate
@@ -43,8 +43,10 @@ For renderer development with browser preview and Electron hot reload support:
 npm run dev:desktop
 ```
 
-The desktop app provides separate System audio and Microphone transcript pages,
-a settings page, and a compact subtitle window. Browser-only visual previews are
+The desktop app starts with separate computer and microphone pages. Additional
+computer, multi-microphone, or LAN sources can be named and assigned an icon;
+every source receives its own transcript, transport, archive state, and export history.
+A settings page and compact subtitle window remain shared surfaces. Browser-only visual previews are
 available from the Vite server with `?surface=main&preview=1` or
 `?surface=compact&preview=1`; preview data is never enabled in Electron.
 
@@ -79,10 +81,20 @@ well-supported terminology errors and never persists inferred rules.
 - Audio: `archives/audio/<session name>/*.wav`
 - Source-only Markdown: `archives/transcription/<session name>.md`
 - Bilingual Markdown: `archives/translation/<session name>.md`
-- System audio and microphone own independent sessions, names, panels, and files.
+- Every configured source owns an independent session, name, panel, and set of files.
 - Same-minute name collisions are reserved atomically and receive `_2`, `_3`, and later suffixes.
 - Fifteen-minute WAV segmentation limits damage from interrupted sessions
 - Structured application logs: `logs/YYYY-MM-DD.jsonl`
+
+## LAN sources
+
+Adding an Other source starts a tokenized capture page on port `47321`. The page
+lets another device select a microphone and start or stop its stream; received PCM
+enters the same per-source recording and ASR pipeline as local inputs. Modern
+browsers require a trusted secure context for microphone access from a non-loopback
+address. For those devices, expose the local port through a trusted HTTPS reverse
+proxy that forwards WebSocket upgrades; the page automatically uses `wss:` when its
+outer URL is HTTPS.
 
 ## Usage and pricing
 

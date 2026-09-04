@@ -5,9 +5,7 @@ export const SOURCE_PREFERENCE_EVENT = "live-translating:source-change";
 
 export function readSourcePreference(): TuiSourceId {
   try {
-    return window.localStorage.getItem(SOURCE_PREFERENCE_KEY) === "microphone"
-      ? "microphone"
-      : "system";
+    return window.localStorage.getItem(SOURCE_PREFERENCE_KEY) || "system";
   } catch {
     return "system";
   }

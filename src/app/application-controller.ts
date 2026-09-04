@@ -4,7 +4,10 @@ import { randomUUID } from "node:crypto";
 import { FfmpegWhisperSession, type AsrTranscript } from "../asr/ffmpeg-whisper.js";
 import { AsrModelManager } from "../asr/model-manager.js";
 import { TranscriptAssembler, cleanAsrText } from "../asr/transcript-assembler.js";
-import type { AudioSourceId } from "../audio/types.js";
+import type {
+  AudioSourceDefinition,
+  AudioSourceId,
+} from "../audio/types.js";
 import { BillingTracker } from "../billing/billing-tracker.js";
 import { config } from "../config.js";
 import { AppLogger } from "../logging/app-logger.js";
@@ -14,11 +17,18 @@ import {
   RecordingManager,
 } from "../recording/recording-manager.js";
 import { NativeAudioManager, type AudioManagerEvent } from "../sources/native-audio-manager.js";
+import {
+  listSystemAudioApplications,
+  type SystemAudioApplication,
+} from "../sources/audio-source-catalog.js";
+import { RemoteSourceServer } from "../sources/remote-source-server.js";
+import { SourceStore } from "../sources/source-store.js";
 import type {
   TuiAudioDevice,
   TuiController,
   TuiLanguage,
   TuiModelHealth,
+  TuiNewSourceInput,
   TuiNotification,
   TuiReviewModel,
   TuiSessionPhase,
@@ -62,6 +72,7 @@ const TARGET_LANGUAGES: readonly TuiLanguage[] = [
 ];
 
 interface MutableSourceState {
+  definition: AudioSourceDefinition;
   enabled: boolean;
   phase: TuiSourcePhase;
   deviceId: string | undefined;
@@ -96,6 +107,8 @@ export class ApplicationController implements TuiController {
   private readonly recording: RecordingManager;
   private readonly billing = new BillingTracker();
   private readonly audio: NativeAudioManager;
+  private readonly remoteSources: RemoteSourceServer;
+  private readonly sourceStore: SourceStore;
   private readonly asrModels: AsrModelManager;
   private readonly translator = new OpenAICompatibleTranslationProvider(config.translation);
   private readonly asrSessions = new Map<AudioSourceId, FfmpegWhisperSession>();
@@ -116,6 +129,7 @@ export class ApplicationController implements TuiController {
   private closed = false;
   private settingsRevision = 0;
   private microphones: TuiAudioDevice[] = [];
+  private systemAudioApplications: SystemAudioApplication[] = [];
   private subtitles: TuiSubtitleEntry[] = [];
   private running = false;
   private readonly sessionPhases: Record<AudioSourceId, TuiSessionPhase> = {
@@ -127,6 +141,7 @@ export class ApplicationController implements TuiController {
     system: createDefaultArchiveName(),
     microphone: createDefaultArchiveName(),
   };
+  private readonly sourceOrder: AudioSourceId[] = ["system", "microphone"];
   private notifications: TuiNotification[] = [];
   private sourceLanguage = "auto";
   private targetLanguage = "zh";
@@ -144,6 +159,13 @@ export class ApplicationController implements TuiController {
   ] as const).map((model) => ({ model, status: "idle" }));
   private readonly sources: Record<AudioSourceId, MutableSourceState> = {
     system: {
+      definition: {
+        id: "system",
+        name: "电脑声音",
+        icon: "monitor",
+        capture: { kind: "system", allSystemAudio: true, processes: [] },
+        builtIn: true,
+      },
       enabled: true,
       phase: "disabled",
       deviceId: undefined,
@@ -154,6 +176,13 @@ export class ApplicationController implements TuiController {
       error: undefined,
     },
     microphone: {
+      definition: {
+        id: "microphone",
+        name: "麦克风",
+        icon: "microphone",
+        capture: { kind: "microphone", deviceIds: [] },
+        builtIn: true,
+      },
       enabled: true,
       phase: "disabled",
       deviceId: undefined,
@@ -173,6 +202,8 @@ export class ApplicationController implements TuiController {
     this.logger = new AppLogger(rootDirectory);
     this.recording = new RecordingManager(rootDirectory);
     this.audio = new NativeAudioManager(this.logger, this.recording);
+    this.remoteSources = new RemoteSourceServer(this.audio, this.logger);
+    this.sourceStore = new SourceStore(rootDirectory);
     this.asrModels = new AsrModelManager(this.logger, rootDirectory);
     this.audio.subscribe((event) => this.handleAudioEvent(event));
     this.logger.subscribe(() => this.emit());
@@ -182,10 +213,28 @@ export class ApplicationController implements TuiController {
     await this.recording.initialize();
     const devices = this.audio.listMicrophones();
     const defaultId = this.audio.defaultMicrophoneId();
-    this.sources.microphone.deviceId = defaultId ?? devices[0]?.id;
-    this.sources.microphone.deviceLabel = devices.find(
-      (device) => device.id === this.sources.microphone.deviceId,
+    const microphone = this.sourceState("microphone");
+    microphone.deviceId = defaultId ?? devices[0]?.id;
+    microphone.deviceLabel = devices.find(
+      (device) => device.id === microphone.deviceId,
     )?.name;
+    microphone.definition = {
+      ...microphone.definition,
+      capture: {
+        kind: "microphone",
+        deviceIds: microphone.deviceId ? [microphone.deviceId] : [],
+      },
+    };
+    this.systemAudioApplications = await listSystemAudioApplications();
+    const savedSources = await this.sourceStore.load().catch((error) => {
+      this.logger.warn(`Saved sources could not be loaded: ${String(error)}`, "sources");
+      return [];
+    });
+    for (const definition of savedSources) {
+      if (!this.sources[definition.id] && !definition.builtIn) {
+        await this.registerSourceDefinition(definition);
+      }
+    }
     this.logger.info(`Found ${devices.length} microphone device(s)`, "audio");
     this.emit();
     void this.refreshPricing().catch((error) => {
@@ -201,21 +250,21 @@ export class ApplicationController implements TuiController {
       running: this.running,
       sessionPhase: this.aggregateSessionPhase(),
       transitioning: this.transitioning,
-      sources: {
-        system: this.sourceSnapshot("system", "System audio"),
-        microphone: this.sourceSnapshot("microphone", "Microphone"),
-      },
+      sources: Object.fromEntries(
+        this.sourceOrder.map((sourceId) => [sourceId, this.sourceSnapshot(sourceId)]),
+      ),
+      sourceOrder: this.sourceOrder,
       microphoneDevices: this.microphones,
+      systemAudioApplications: this.systemAudioApplications,
       sourceLanguages: SOURCE_LANGUAGES,
       targetLanguages: TARGET_LANGUAGES,
       sourceLanguage: this.sourceLanguage,
       targetLanguage: this.targetLanguage,
       model: this.model,
       recording: this.recording.active(),
-      sessions: {
-        system: this.sourceSessionSnapshot("system"),
-        microphone: this.sourceSessionSnapshot("microphone"),
-      },
+      sessions: Object.fromEntries(
+        this.sourceOrder.map((sourceId) => [sourceId, this.sourceSessionSnapshot(sourceId)]),
+      ),
       billing: this.billing.getSnapshot(),
       notifications: this.notifications,
       reviewerEnabled: this.reviewerEnabled,
@@ -225,10 +274,9 @@ export class ApplicationController implements TuiController {
       reviewQueueSize: this.reviewQueueSize,
       modelHealth: this.modelHealth,
       subtitles: this.subtitles,
-      paragraphs: {
-        system: groupSubtitleParagraphs(this.subtitles, "system"),
-        microphone: groupSubtitleParagraphs(this.subtitles, "microphone"),
-      },
+      paragraphs: Object.fromEntries(
+        this.sourceOrder.map((sourceId) => [sourceId, groupSubtitleParagraphs(this.subtitles, sourceId)]),
+      ),
       logs: this.logger.recent(100).map((entry) => ({
         ...entry,
         timestamp: entry.timestamp.slice(11, 19),
@@ -241,8 +289,43 @@ export class ApplicationController implements TuiController {
     return () => this.events.off("snapshot", listener);
   }
 
+  async addSource(input: TuiNewSourceInput): Promise<void> {
+    return this.withLifecycle(async () => {
+      const name = input.name.trim().slice(0, 64);
+      if (!name) throw new Error("Source name cannot be empty");
+      if (input.capture.kind === "system" && !input.capture.allSystemAudio && input.capture.processes.length === 0) {
+        throw new Error("Select at least one computer application or all system audio");
+      }
+      if (input.capture.kind === "microphone" && input.capture.deviceIds.length === 0) {
+        throw new Error("Select at least one microphone");
+      }
+      const sourceId = `${input.capture.kind}-${randomUUID()}`;
+      const definition: AudioSourceDefinition = input.capture.kind === "remote"
+        ? {
+            id: sourceId,
+            name,
+            icon: input.icon,
+            capture: { kind: "remote", token: randomUUID().replaceAll("-", "") },
+          }
+        : { id: sourceId, name, icon: input.icon, capture: input.capture };
+      await this.registerSourceDefinition(definition);
+      await this.persistCustomSources();
+      this.logger.info(`Added ${definition.capture.kind} source: ${name}`, "sources");
+      this.emit();
+    });
+  }
+
+  async refreshSourceCatalog(): Promise<void> {
+    const [applications] = await Promise.all([
+      listSystemAudioApplications(),
+      Promise.resolve(this.audio.listMicrophones()),
+    ]);
+    this.systemAudioApplications = applications;
+    this.emit();
+  }
+
   async toggleRunning(): Promise<void> {
-    const active = (["system", "microphone"] as const).filter(
+    const active = this.sourceOrder.filter(
       (sourceId) => this.sessionPhases[sourceId] !== "idle",
     );
     if (active.length === 0) {
@@ -258,6 +341,7 @@ export class ApplicationController implements TuiController {
 
   async startSession(sourceId: AudioSourceId): Promise<void> {
     return this.withLifecycle(async () => {
+      const source = this.sourceState(sourceId);
       if (this.sessionPhases[sourceId] !== "idle") {
         return;
       }
@@ -265,13 +349,14 @@ export class ApplicationController implements TuiController {
       this.emit();
       try {
         const startsNewBillingWindow = !this.hasActiveSession();
-        this.sources[sourceId].enabled = true;
+        source.enabled = true;
         this.resetForNewSession(sourceId);
-        await this.recording.start(sourceId, this.archiveNames[sourceId], {
+        await this.recording.start(sourceId, this.archiveNames[sourceId] ?? createDefaultArchiveName(), {
           sourceLanguage: this.sourceLanguage,
           targetLanguage: this.targetLanguage,
           model: this.model,
           sourceId,
+          sourceName: source.definition.name,
         });
         if (startsNewBillingWindow) {
           this.billing.startSession();
@@ -305,7 +390,7 @@ export class ApplicationController implements TuiController {
         }
       }
     } else {
-      for (const sourceId of ["system", "microphone"] as const) {
+      for (const sourceId of this.sourceOrder) {
         if (this.sessionPhases[sourceId] === "recording") {
           await this.pauseSession(sourceId);
         }
@@ -324,7 +409,7 @@ export class ApplicationController implements TuiController {
         await this.stopSource(sourceId);
         this.running = this.anyAudioActive();
         this.sessionPhases[sourceId] = "paused";
-        this.sources[sourceId].phase = "paused";
+        this.sourceState(sourceId).phase = "paused";
         this.logger.info(`${sourceId} session paused`, "app");
       } finally {
         this.transitioning = false;
@@ -370,7 +455,7 @@ export class ApplicationController implements TuiController {
         const archive = await this.recording.stop(sourceId);
         if (archive) {
           this.archiveNames[sourceId] = createDefaultArchiveName();
-          this.pushNotification("success", `${sourceLabel(sourceId)}已自动保存：${archive.name}`);
+          this.pushNotification("success", `${this.sourceName(sourceId)}已自动保存：${archive.name}`);
           this.logger.info(`Session archived to ${archive.audioDirectory}`, "recording");
         }
       } finally {
@@ -383,7 +468,7 @@ export class ApplicationController implements TuiController {
 
   async toggleSource(sourceId: AudioSourceId): Promise<void> {
     return this.withLifecycle(async () => {
-      const state = this.sources[sourceId];
+      const state = this.sourceState(sourceId);
       state.enabled = !state.enabled;
       if (this.sessionPhases[sourceId] === "recording") {
         if (state.enabled) {
@@ -400,19 +485,20 @@ export class ApplicationController implements TuiController {
   }
 
   async setSourceEnabled(sourceId: AudioSourceId, enabled: boolean): Promise<void> {
-    if (this.sources[sourceId].enabled !== enabled) {
+    if (this.sourceState(sourceId).enabled !== enabled) {
       await this.toggleSource(sourceId);
     }
   }
 
   async cycleMicrophoneDevice(direction: 1 | -1 = 1): Promise<void> {
     return this.withLifecycle(async () => {
+      const microphone = this.sourceState("microphone");
       this.audio.listMicrophones();
       if (this.microphones.length === 0) {
         return;
       }
       const current = this.microphones.findIndex(
-        (device) => device.id === this.sources.microphone.deviceId,
+        (device) => device.id === microphone.deviceId,
       );
       const base = current >= 0 ? current : direction === 1 ? -1 : 0;
       const next = (base + direction + this.microphones.length) % this.microphones.length;
@@ -420,9 +506,13 @@ export class ApplicationController implements TuiController {
       if (!device) {
         return;
       }
-      this.sources.microphone.deviceId = device.id;
-      this.sources.microphone.deviceLabel = device.label;
-      if (this.running && this.sources.microphone.enabled) {
+      microphone.deviceId = device.id;
+      microphone.deviceLabel = device.label;
+      microphone.definition = {
+        ...microphone.definition,
+        capture: { kind: "microphone", deviceIds: [device.id] },
+      };
+      if (this.sessionPhases.microphone === "recording") {
         await this.stopSource("microphone");
         await this.startSource("microphone");
       }
@@ -580,7 +670,7 @@ export class ApplicationController implements TuiController {
       return this.shutdownPromise;
     }
     this.closing = true;
-    for (const sourceId of ["system", "microphone"] as const) {
+    for (const sourceId of this.sourceOrder) {
       if (this.sessionPhases[sourceId] !== "idle") {
         this.sessionPhases[sourceId] = "saving";
       }
@@ -607,10 +697,13 @@ export class ApplicationController implements TuiController {
         controller.abort();
       }
       this.translationControllers.clear();
-      await Promise.allSettled((["system", "microphone"] as const).map(async (sourceId) => {
+      await Promise.allSettled(this.sourceOrder.map(async (sourceId) => {
         await this.recording.stop(sourceId);
         this.sessionPhases[sourceId] = "idle";
       }));
+      await this.remoteSources.stop().catch((error) => {
+        this.logger.warn(`Remote source server shutdown failed: ${String(error)}`, "remote");
+      });
       this.logger.info("Application shutdown complete", "app");
       await this.logger.close();
     });
@@ -650,7 +743,7 @@ export class ApplicationController implements TuiController {
     this.asrSessions.set(sourceId, asr);
     this.transcriptAssemblers.set(sourceId, assembler);
     try {
-      await this.audio.start(sourceId, this.sources[sourceId].deviceId);
+      await this.audio.start(this.sourceState(sourceId).definition);
     } catch (error) {
       this.asrSessions.delete(sourceId);
       this.transcriptAssemblers.delete(sourceId);
@@ -696,13 +789,13 @@ export class ApplicationController implements TuiController {
     for (const assembler of assemblers) {
       assembler.flush();
     }
-    for (const sourceId of ["system", "microphone"] as const) {
+    for (const sourceId of this.sourceOrder) {
       this.sourceGenerations.set(sourceId, (this.sourceGenerations.get(sourceId) ?? 0) + 1);
     }
   }
 
   private async restartAsrSessions(): Promise<void> {
-    const active = (["system", "microphone"] as const).filter((id) => this.audio.isActive(id));
+    const active = this.sourceOrder.filter((id) => this.audio.isActive(id));
     for (const sourceId of active) {
       const generation = (this.sourceGenerations.get(sourceId) ?? 0) + 1;
       this.sourceGenerations.set(sourceId, generation);
@@ -752,6 +845,7 @@ export class ApplicationController implements TuiController {
       }));
     } else if (event.type === "status") {
       const state = this.sources[event.sourceId];
+      if (!state) return;
       state.phase = event.phase;
       state.error = event.error;
       if (event.deviceLabel) {
@@ -767,6 +861,7 @@ export class ApplicationController implements TuiController {
       }
     } else {
       const state = this.sources[event.frame.sourceId];
+      if (!state) return;
       state.level = Math.min(1, event.level * 12);
       const session = this.asrSessions.get(event.frame.sourceId);
       const accepted = session?.write(event.frame.samples, event.frame.capturedAt) ?? false;
@@ -935,7 +1030,7 @@ export class ApplicationController implements TuiController {
     started: number,
   ): Promise<void> {
     if (this.closed || settings.revision !== this.settingsRevision) return;
-    this.sources[entry.sourceId].latencyMs = performance.now() - started;
+    this.sourceState(entry.sourceId).latencyMs = performance.now() - started;
     this.updateSubtitle(entry.id, { translation: result.text });
     const turn: ContextTurn = { id: entry.id, source: entry.sourceText, translation: result.text };
     this.contexts.set(entry.sourceId, [...contexts.slice(-7), turn]);
@@ -1081,7 +1176,7 @@ export class ApplicationController implements TuiController {
         this.audio.stop(sourceId),
         ...(session ? [session.stop()] : []),
       ]);
-      const state = this.sources[sourceId];
+      const state = this.sourceState(sourceId);
       state.phase = "error";
       state.error = error.message;
       this.running = this.anyAudioActive();
@@ -1133,7 +1228,7 @@ export class ApplicationController implements TuiController {
       assembler.discard();
       await session.stop().catch(() => undefined);
       await this.audio.stop(sourceId).catch(() => undefined);
-      const state = this.sources[sourceId];
+      const state = this.sourceState(sourceId);
       state.phase = "error";
       state.error = error instanceof Error ? error.message : String(error);
       this.running = this.anyAudioActive();
@@ -1153,7 +1248,7 @@ export class ApplicationController implements TuiController {
   }
 
   private enabledSources(): AudioSourceId[] {
-    return (["system", "microphone"] as const).filter((sourceId) => this.sources[sourceId].enabled);
+    return this.sourceOrder.filter((sourceId) => this.sourceState(sourceId).enabled);
   }
 
   private resetForNewSession(sourceId: AudioSourceId): void {
@@ -1182,6 +1277,43 @@ export class ApplicationController implements TuiController {
     }
   }
 
+  private async registerSourceDefinition(definition: AudioSourceDefinition): Promise<void> {
+    if (Object.hasOwn(this.sources, definition.id)) {
+      throw new Error(`Audio source already exists: ${definition.id}`);
+    }
+
+    if (definition.capture.kind === "remote") {
+      await this.remoteSources.start();
+      this.remoteSources.register(definition.id, definition.capture.token);
+    }
+    await this.recording.registerSource(definition.id);
+
+    const deviceId = definition.capture.kind === "microphone"
+      ? definition.capture.deviceIds[0]
+      : undefined;
+    this.sources[definition.id] = {
+      definition,
+      enabled: true,
+      phase: "disabled",
+      deviceId,
+      deviceLabel: this.selectionLabel(definition),
+      level: 0,
+      latencyMs: undefined,
+      droppedFrames: 0,
+      error: undefined,
+    };
+    this.sessionPhases[definition.id] = "idle";
+    this.archiveNames[definition.id] = createDefaultArchiveName();
+    this.sourceOrder.push(definition.id);
+  }
+
+  private async persistCustomSources(): Promise<void> {
+    const definitions = this.sourceOrder
+      .map((sourceId) => this.sourceState(sourceId).definition)
+      .filter((definition) => !definition.builtIn);
+    await this.sourceStore.save(definitions);
+  }
+
   private pushNotification(kind: TuiNotification["kind"], message: string): void {
     this.notifications = [
       ...this.notifications.slice(-7),
@@ -1200,13 +1332,13 @@ export class ApplicationController implements TuiController {
   }
 
   private hasActiveSession(): boolean {
-    return (["system", "microphone"] as const).some(
+    return this.sourceOrder.some(
       (sourceId) => this.sessionPhases[sourceId] !== "idle",
     );
   }
 
   private anyAudioActive(): boolean {
-    return (["system", "microphone"] as const).some((sourceId) => this.audio.isActive(sourceId));
+    return this.sourceOrder.some((sourceId) => this.audio.isActive(sourceId));
   }
 
   private aggregateSessionPhase(): TuiSessionPhase {
@@ -1220,11 +1352,11 @@ export class ApplicationController implements TuiController {
   private sourceSessionSnapshot(sourceId: AudioSourceId): TuiSnapshot["sessions"][AudioSourceId] {
     const lastSaved = this.recording.lastSaved(sourceId);
     return {
-      phase: this.sessionPhases[sourceId],
+      phase: this.sessionPhases[sourceId] ?? "idle",
       recording: this.recording.active(sourceId),
       archive: {
         rootDirectory: this.recording.archiveRoot,
-        currentName: this.archiveNames[sourceId],
+        currentName: this.archiveNames[sourceId] ?? createDefaultArchiveName(),
         ...(lastSaved ? { lastSaved } : {}),
       },
     };
@@ -1254,11 +1386,17 @@ export class ApplicationController implements TuiController {
     return run;
   }
 
-  private sourceSnapshot(sourceId: AudioSourceId, label: string): TuiSourceState {
-    const state = this.sources[sourceId];
+  private sourceSnapshot(sourceId: AudioSourceId): TuiSourceState {
+    const state = this.sourceState(sourceId);
+    const remoteUrls = state.definition.capture.kind === "remote"
+      ? this.remoteSources.endpoint(sourceId, state.definition.capture.token).urls
+      : undefined;
     return {
       id: sourceId,
-      label,
+      label: state.definition.name,
+      kind: state.definition.capture.kind,
+      icon: state.definition.icon,
+      selectionLabel: state.deviceLabel ?? this.selectionLabel(state.definition),
       enabled: state.enabled,
       phase: state.phase,
       level: state.level,
@@ -1267,7 +1405,33 @@ export class ApplicationController implements TuiController {
       ...(state.deviceLabel ? { deviceLabel: state.deviceLabel } : {}),
       ...(state.latencyMs === undefined ? {} : { latencyMs: state.latencyMs }),
       ...(state.error ? { error: state.error } : {}),
+      ...(remoteUrls ? { remoteUrls } : {}),
     };
+  }
+
+  private sourceState(sourceId: AudioSourceId): MutableSourceState {
+    const state = Object.hasOwn(this.sources, sourceId) ? this.sources[sourceId] : undefined;
+    if (!state) throw new Error(`Unknown audio source: ${sourceId}`);
+    return state;
+  }
+
+  private sourceName(sourceId: AudioSourceId): string {
+    return this.sourceState(sourceId).definition.name;
+  }
+
+  private selectionLabel(definition: AudioSourceDefinition): string {
+    if (definition.capture.kind === "system") {
+      if (definition.capture.allSystemAudio) return "全部电脑声音";
+      const names = [...new Set(definition.capture.processes.map((process) => process.name))];
+      return names.length <= 1 ? (names[0] ?? "未选择电脑应用") : `${names[0] ?? "电脑应用"} 等 ${names.length} 个应用`;
+    }
+    if (definition.capture.kind === "microphone") {
+      const names = definition.capture.deviceIds
+        .map((id) => this.microphones.find((device) => device.id === id)?.label)
+        .filter((name): name is string => Boolean(name));
+      return names.length <= 1 ? (names[0] ?? "未选择麦克风") : `${names[0] ?? "麦克风"} 等 ${names.length} 个设备`;
+    }
+    return "局域网设备";
   }
 
   private emit(): void {
@@ -1347,10 +1511,6 @@ function timeOfDaySeconds(timestamp: string): number {
 
 function otherTranslationModel(model: TuiTranslationModel): TuiTranslationModel {
   return model === "hy-mt2-plus" ? "hy-mt2-pro" : "hy-mt2-plus";
-}
-
-function sourceLabel(sourceId: AudioSourceId): string {
-  return sourceId === "system" ? "电脑声音" : "麦克风";
 }
 
 function isPredominantlyTargetLanguage(text: string, targetLanguage: string): boolean {

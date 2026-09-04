@@ -1,7 +1,7 @@
 {
   "name": "live-translating",
   "version": "0.1.0",
-  "description": "Windows live transcription and context-aware translation for system audio and microphones.",
+  "description": "Windows live transcription and context-aware translation for configurable local and LAN audio sources.",
   "author": "Hylfrd",
   "private": true,
   "type": "module",
@@ -33,15 +33,19 @@
     "ink": "^7.1.1",
     "lucide-react": "^1.39.0",
     "native-audio-node": "^0.3.5",
+    "native-sound-mixer": "^3.4.6-win",
     "openai": "^7.8.0",
+    "ps-list": "^9.0.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "ws": "^8.18.3",
     "zod": "^4.5.4"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.1.1",
     "electron": "^44.1.1",
     "electron-builder": "^26.15.3",
@@ -61,7 +65,8 @@
       "package.json"
     ],
     "asarUnpack": [
-      "node_modules/native-audio-node/**/*"
+      "node_modules/native-audio-node/**/*",
+      "node_modules/native-sound-mixer/**/*"
     ],
     "directories": {
       "output": "release"

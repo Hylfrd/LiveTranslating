@@ -1,6 +1,11 @@
 import type { BillingSnapshot } from "../billing/types.js";
+import type {
+  AudioSourceIcon,
+  AudioSourceKind,
+  SystemProcessSelection,
+} from "../audio/types.js";
 
-export type TuiSourceId = "system" | "microphone";
+export type TuiSourceId = string;
 export type TuiSessionPhase = "idle" | "recording" | "paused" | "saving";
 
 export type TuiSourcePhase =
@@ -19,6 +24,9 @@ export interface TuiAudioDevice {
 export interface TuiSourceState {
   readonly id: TuiSourceId;
   readonly label: string;
+  readonly kind: AudioSourceKind;
+  readonly icon: AudioSourceIcon;
+  readonly selectionLabel: string;
   readonly enabled: boolean;
   readonly phase: TuiSourcePhase;
   readonly deviceId?: string;
@@ -27,6 +35,31 @@ export interface TuiSourceState {
   readonly latencyMs?: number;
   readonly droppedFrames?: number;
   readonly error?: string;
+  readonly remoteUrls?: readonly string[];
+}
+
+export interface TuiSystemAudioApplication {
+  readonly id: string;
+  readonly name: string;
+  readonly executablePath: string;
+  readonly processIds: readonly number[];
+  readonly active: boolean;
+}
+
+export interface TuiNewSourceInput {
+  readonly name: string;
+  readonly icon: AudioSourceIcon;
+  readonly capture:
+    | {
+        readonly kind: "system";
+        readonly allSystemAudio: boolean;
+        readonly processes: readonly SystemProcessSelection[];
+      }
+    | {
+        readonly kind: "microphone";
+        readonly deviceIds: readonly string[];
+      }
+    | { readonly kind: "remote" };
 }
 
 export interface TuiLanguage {
@@ -105,7 +138,9 @@ export interface TuiSnapshot {
   readonly sessionPhase: TuiSessionPhase;
   readonly transitioning?: boolean;
   readonly sources: Readonly<Record<TuiSourceId, TuiSourceState>>;
+  readonly sourceOrder: readonly TuiSourceId[];
   readonly microphoneDevices: readonly TuiAudioDevice[];
+  readonly systemAudioApplications: readonly TuiSystemAudioApplication[];
   readonly sourceLanguages: readonly TuiLanguage[];
   readonly targetLanguages: readonly TuiLanguage[];
   readonly sourceLanguage: string;
@@ -155,6 +190,8 @@ export interface TuiController {
   setArchiveName(sourceId: TuiSourceId, name: string): TuiActionResult;
   refreshPricing(): TuiActionResult;
   dismissNotification(id: string): TuiActionResult;
+  addSource(input: TuiNewSourceInput): TuiActionResult;
+  refreshSourceCatalog(): TuiActionResult;
   shutdown(): TuiActionResult;
 }
 

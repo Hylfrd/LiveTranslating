@@ -22,6 +22,7 @@ export interface RecordingMetadata {
   readonly targetLanguage: string;
   readonly model: string;
   readonly sourceId: AudioSourceId;
+  readonly sourceName: string;
 }
 
 interface RecordingSession {
@@ -132,6 +133,11 @@ export class RecordingManager {
     latest.forEach((archive) => {
       if (archive) this.latestArchives.set(archive.sourceId, archive);
     });
+  }
+
+  async registerSource(sourceId: AudioSourceId): Promise<void> {
+    const latest = await this.findLatestArchive(sourceId);
+    if (latest) this.latestArchives.set(sourceId, latest);
   }
 
   sessionIdForSpeech(
@@ -290,7 +296,7 @@ export class RecordingManager {
     try {
       await writeFile(
         transcriptionPath,
-        renderTranscriptionMarkdown(name, sourceId, session.startedAt, endedAt, paragraphs),
+        renderTranscriptionMarkdown(name, sourceId, session.metadata.sourceName, session.startedAt, endedAt, paragraphs),
         "utf8",
       );
       await writeFile(
@@ -298,6 +304,7 @@ export class RecordingManager {
         renderTranslationMarkdown(
           name,
           sourceId,
+          session.metadata.sourceName,
           session.startedAt,
           endedAt,
           session.metadata.targetLanguage,
@@ -456,28 +463,30 @@ function groupTranscripts(entries: Iterable<RecordedTranscript>): TranscriptPara
 function renderTranscriptionMarkdown(
   name: string,
   sourceId: AudioSourceId,
+  sourceName: string,
   startedAt: string,
   endedAt: string,
   paragraphs: readonly TranscriptParagraph[],
 ): string {
   const content = paragraphs.map((paragraph) => [
-    `## ${paragraph.timestamp} · ${sourceLabel(paragraph.sourceId)}`,
+    `## ${paragraph.timestamp} · ${sourceName}`,
     "",
     joinParts(paragraph.entries.map((entry) => entry.sourceText), "en"),
   ].join("\n")).join("\n\n");
-  return `${archiveHeader(name, sourceId, startedAt, endedAt, "纯文字稿")}\n\n${content || "_本次会话没有识别到语音。_"}\n`;
+  return `${archiveHeader(name, sourceId, sourceName, startedAt, endedAt, "纯文字稿")}\n\n${content || "_本次会话没有识别到语音。_"}\n`;
 }
 
 function renderTranslationMarkdown(
   name: string,
   sourceId: AudioSourceId,
+  sourceName: string,
   startedAt: string,
   endedAt: string,
   targetLanguage: string,
   paragraphs: readonly TranscriptParagraph[],
 ): string {
   const content = paragraphs.map((paragraph) => [
-    `## ${paragraph.timestamp} · ${sourceLabel(paragraph.sourceId)}`,
+    `## ${paragraph.timestamp} · ${sourceName}`,
     "",
     "**原文**",
     "",
@@ -496,12 +505,13 @@ function renderTranslationMarkdown(
           ) || "_翻译未完成。_",
         ]),
   ].join("\n")).join("\n\n");
-  return `${archiveHeader(name, sourceId, startedAt, endedAt, "双语翻译稿")}\n\n${content || "_本次会话没有识别到语音。_"}\n`;
+  return `${archiveHeader(name, sourceId, sourceName, startedAt, endedAt, "双语翻译稿")}\n\n${content || "_本次会话没有识别到语音。_"}\n`;
 }
 
 function archiveHeader(
   name: string,
   sourceId: AudioSourceId,
+  sourceName: string,
   startedAt: string,
   endedAt: string,
   type: string,
@@ -511,6 +521,7 @@ function archiveHeader(
     "",
     `- 类型：${type}`,
     `- 声源：${sourceId}`,
+    `- 声源名称：${sourceName}`,
     `- 开始：${startedAt}`,
     `- 结束：${endedAt}`,
   ].join("\n");
@@ -518,10 +529,6 @@ function archiveHeader(
 
 function joinParts(parts: readonly string[], language: string): string {
   return parts.filter(Boolean).join(/^(?:zh|ja|ko)(?:-|$)/iu.test(language) ? "" : " ");
-}
-
-function sourceLabel(sourceId: AudioSourceId): string {
-  return sourceId === "system" ? "电脑声音" : "麦克风";
 }
 
 function timeOfDaySeconds(timestamp: string): number {

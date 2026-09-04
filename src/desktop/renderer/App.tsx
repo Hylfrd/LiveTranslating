@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertCircle,
@@ -9,6 +9,8 @@ import {
   FileAudio,
   FileText,
   FolderArchive,
+  Globe2,
+  Headphones,
   Layers3,
   LoaderCircle,
   Mic,
@@ -17,18 +19,21 @@ import {
   PanelRightOpen,
   Pause,
   Play,
+  Plus,
   Radio,
   RefreshCw,
+  RadioTower,
+  Search,
   Settings,
   ShieldCheck,
   Sparkles,
   Square,
+  Video,
   X,
 } from "lucide-react";
 
 import appIconUrl from "../../../assets/icon.png?url";
 import type {
-  TuiAudioDevice,
   TuiLanguage,
   TuiModelHealth,
   TuiNotification,
@@ -39,10 +44,12 @@ import type {
   TuiSourceState,
   TuiSubtitleEntry,
   TuiSubtitleParagraph,
+  TuiNewSourceInput,
 } from "../../tui/controller.js";
+import type { AudioSourceIcon, AudioSourceKind } from "../../audio/types.js";
 import type { DesktopActionName, DesktopActionPayload, DesktopExportKind } from "./types.js";
 import { readSourcePreference, writeSourcePreference } from "./source-preference.js";
-import { IconButton, LevelMeter, Toggle } from "./ui.js";
+import { IconButton, Toggle } from "./ui.js";
 import { useDesktopBridge } from "./use-desktop-bridge.js";
 
 type AppPage = TuiSourceId | "settings";
@@ -73,10 +80,14 @@ const SESSION_LABELS: Record<TuiSessionPhase, string> = {
   saving: "正在保存",
 };
 
-const SOURCE_LABELS: Record<TuiSourceId, string> = {
-  system: "电脑声音",
-  microphone: "麦克风",
-};
+const SOURCE_ICONS = {
+  monitor: MonitorSpeaker,
+  microphone: Mic,
+  headphones: Headphones,
+  radio: RadioTower,
+  globe: Globe2,
+  video: Video,
+} as const;
 
 const MODEL_LABELS = {
   "hy-mt2-plus": "Hunyuan MT2 Plus",
@@ -229,11 +240,13 @@ function Sidebar({
   snapshot,
   onNavigate,
   onOpenOverlay,
+  onAddSource,
 }: {
   readonly page: AppPage;
   readonly snapshot: TuiSnapshot;
   readonly onNavigate: (page: AppPage) => void;
   readonly onOpenOverlay: () => void;
+  readonly onAddSource: () => void;
 }) {
   return (
     <aside className="sidebar">
@@ -241,34 +254,52 @@ function Sidebar({
         <img src={appIconUrl} alt="" />
         <strong>LiveTranslating</strong>
       </div>
-      <nav className="sidebar__nav" aria-label="主导航">
-        {([[
-          "system", "电脑声音", MonitorSpeaker,
-        ], [
-          "microphone", "麦克风", Mic,
-        ], [
-          "settings", "设置", Settings,
-        ]] as const).map(([id, label, Icon]) => {
-          const session = id === "settings" ? undefined : snapshot.sessions[id];
-          return (
-            <button
-              key={id}
-              type="button"
-              className={page === id ? "is-active" : undefined}
-              aria-current={page === id ? "page" : undefined}
-              onClick={() => onNavigate(id)}
-            >
-              <Icon aria-hidden="true" />
-              <span>{label}</span>
-              {session ? <i className={`nav-state nav-state--${session.phase}`} aria-label={SESSION_LABELS[session.phase]} /> : null}
-            </button>
-          );
-        })}
-      </nav>
+      <div className="sidebar__sources">
+        <div className="sidebar__source-scroll">
+          <nav className="sidebar__nav" aria-label="声音来源">
+            {snapshot.sourceOrder.map((id) => {
+              const source = snapshot.sources[id];
+              const session = snapshot.sessions[id];
+              if (!source || !session) return null;
+              const Icon = SOURCE_ICONS[source.icon];
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  className={page === id ? "is-active" : undefined}
+                  aria-current={page === id ? "page" : undefined}
+                  aria-label={source.label}
+                  title={source.label}
+                  onClick={() => onNavigate(id)}
+                >
+                  <Icon aria-hidden="true" />
+                  <span>{source.label}</span>
+                  <i className={`nav-state nav-state--${session.phase}`} aria-label={SESSION_LABELS[session.phase]} />
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+        <button className="add-source-command" type="button" aria-label="添加源" title="添加源" onClick={onAddSource}>
+          <Plus aria-hidden="true" />
+          <span>添加源</span>
+        </button>
+      </div>
       <div className="sidebar__actions">
-        <button className="overlay-command" type="button" onClick={onOpenOverlay}>
+        <button className="overlay-command" type="button" aria-label="字幕小窗" title="字幕小窗" onClick={onOpenOverlay}>
           <ExternalLink aria-hidden="true" />
           <span>字幕小窗</span>
+        </button>
+        <button
+          className={`settings-command${page === "settings" ? " is-active" : ""}`}
+          type="button"
+          aria-current={page === "settings" ? "page" : undefined}
+          aria-label="设置"
+          title="设置"
+          onClick={() => onNavigate("settings")}
+        >
+          <Settings aria-hidden="true" />
+          <span>设置</span>
         </button>
       </div>
     </aside>
@@ -313,9 +344,7 @@ function TransportControls({
 function SourceHeader({
   source,
   sessionPhase,
-  devices,
   pending,
-  onSelectDevice,
   onStart,
   onPause,
   onResume,
@@ -323,35 +352,27 @@ function SourceHeader({
 }: {
   readonly source: TuiSourceState;
   readonly sessionPhase: TuiSessionPhase;
-  readonly devices: readonly TuiAudioDevice[];
   readonly pending: boolean;
-  readonly onSelectDevice: (deviceId: string) => void;
   readonly onStart: () => void;
   readonly onPause: () => void;
   readonly onResume: () => void;
   readonly onStop: () => void;
 }) {
-  const Icon = source.id === "system" ? MonitorSpeaker : Mic;
+  const Icon = SOURCE_ICONS[source.icon];
   return (
     <header className="source-header">
       <div className="source-header__identity">
         <span className={`source-header__icon source-header__icon--${source.phase}`}><Icon aria-hidden="true" /></span>
-        <div><h1>{SOURCE_LABELS[source.id]}</h1><span className={`phase phase--${source.phase}`}>{SESSION_LABELS[sessionPhase]}</span></div>
+        <div>
+          <h1 title={source.label}>{source.label}</h1>
+          <span className={`phase phase--${source.phase}`}>{SESSION_LABELS[sessionPhase]}</span>
+          <span className="source-header__compact-selection" title={source.selectionLabel}>声音来源：{source.selectionLabel}</span>
+        </div>
       </div>
-      <div className="source-header__device">
-        {source.id === "microphone" ? (
-          <label>
-            <span>输入设备</span>
-            <select value={source.deviceId ?? ""} disabled={pending || devices.length === 0} onChange={(event) => onSelectDevice(event.target.value)}>
-              {devices.length === 0 ? <option value="">没有检测到麦克风</option> : null}
-              {devices.map((device) => <option value={device.id} key={device.id}>{device.label}{device.isDefault ? "（默认）" : ""}</option>)}
-            </select>
-          </label>
-        ) : (
-          <div className="output-device"><span>播放设备</span><strong title={source.deviceLabel}>{source.deviceLabel ?? "Windows 默认播放设备"}</strong></div>
-        )}
+      <div className="source-header__selection">
+        <span>声音来源</span>
+        <strong title={source.selectionLabel}>{source.selectionLabel}</strong>
       </div>
-      <div className="source-header__meter"><LevelMeter level={source.level} active={source.phase === "listening"} /></div>
       <dl className="source-header__stats">
         <div><dt>延迟</dt><dd>{source.latencyMs === undefined ? "--" : `${Math.round(source.latencyMs)} ms`}</dd></div>
         <div><dt>丢帧</dt><dd className={source.droppedFrames ? "is-warning" : undefined}>{source.droppedFrames ?? 0}</dd></div>
@@ -439,6 +460,8 @@ function ArchivePanel({
   readonly onExport: (kind: DesktopExportKind) => void;
 }) {
   const session = snapshot.sessions[sourceId];
+  const source = snapshot.sources[sourceId];
+  if (!session || !source) return null;
   const [draftName, setDraftName] = useState(session.archive.currentName);
   useEffect(() => setDraftName(session.archive.currentName), [session.archive.currentName, sourceId]);
   const commitName = () => {
@@ -458,7 +481,7 @@ function ArchivePanel({
   return (
     <aside className="archive-panel">
       <header className="archive-panel__header">
-        <div><strong>保存区域</strong><span>{SOURCE_LABELS[sourceId]}</span></div>
+        <div><strong>保存区域</strong><span>{source.label}</span></div>
         <IconButton icon={PanelRightClose} label="收回保存面板" onClick={onToggle} />
       </header>
       <div className="archive-panel__body">
@@ -514,29 +537,38 @@ function SourceView({
   readonly onAction: (name: DesktopActionName, payload?: DesktopActionPayload) => void;
   readonly onExport: (kind: DesktopExportKind) => void;
 }) {
-  const phase = snapshot.sessions[sourceId].phase;
+  const source = snapshot.sources[sourceId];
+  const session = snapshot.sessions[sourceId];
+  if (!source || !session) return null;
+  const phase = session.phase;
   return (
     <section className="source-view">
       <SourceHeader
-        source={snapshot.sources[sourceId]}
+        source={source}
         sessionPhase={phase}
-        devices={snapshot.microphoneDevices}
         pending={pending}
-        onSelectDevice={(deviceId) => onAction("set-microphone", { deviceId })}
         onStart={() => onAction("start-session", { sourceId })}
         onPause={() => onAction("pause-session", { sourceId })}
         onResume={() => onAction("resume-session", { sourceId })}
         onStop={() => onAction("stop-session", { sourceId })}
       />
       <div className={`source-workspace${panelCollapsed ? " is-panel-collapsed" : ""}`}>
-        <TranscriptReader
-          sourceId={sourceId}
-          entries={snapshot.subtitles}
-          backendParagraphs={snapshot.paragraphs?.[sourceId]}
-          sessionPhase={phase}
-          sourceLanguage={snapshot.sourceLanguage}
-          targetLanguage={snapshot.targetLanguage}
-        />
+        <div className="source-content">
+          {source.kind === "remote" && source.remoteUrls?.length ? (
+            <div className="remote-source-access">
+              <Globe2 aria-hidden="true" />
+              <div><strong>局域网采集页面</strong><span>{source.remoteUrls.find((url) => !url.includes("127.0.0.1")) ?? source.remoteUrls[0]}</span></div>
+            </div>
+          ) : null}
+          <TranscriptReader
+            sourceId={sourceId}
+            entries={snapshot.subtitles}
+            backendParagraphs={snapshot.paragraphs?.[sourceId]}
+            sessionPhase={phase}
+            sourceLanguage={snapshot.sourceLanguage}
+            targetLanguage={snapshot.targetLanguage}
+          />
+        </div>
         <ArchivePanel
           sourceId={sourceId}
           snapshot={snapshot}
@@ -647,7 +679,8 @@ function SettingsView({
           <div className="health-table">
             {(Object.keys(snapshot.sources) as TuiSourceId[]).map((sourceId) => {
               const source = snapshot.sources[sourceId];
-              return <div key={sourceId}><strong>{SOURCE_LABELS[sourceId]}</strong><span className={`phase phase--${source.phase}`}>{PHASE_LABELS[source.phase]}</span><span>{source.latencyMs === undefined ? "--" : `${Math.round(source.latencyMs)} ms`}</span><span className={source.droppedFrames ? "is-warning" : undefined}>{source.droppedFrames ?? 0} 丢帧</span></div>;
+              if (!source) return null;
+              return <div key={sourceId}><strong>{source.label}</strong><span className={`phase phase--${source.phase}`}>{PHASE_LABELS[source.phase]}</span><span>{source.latencyMs === undefined ? "--" : `${Math.round(source.latencyMs)} ms`}</span><span className={source.droppedFrames ? "is-warning" : undefined}>{source.droppedFrames ?? 0} 丢帧</span></div>;
             })}
           </div>
           <div className="model-health-heading"><div><h3>模型可用性</h3><p>发送最小请求验证四个模型，会产生少量 Token。</p></div><button className="compact-command" type="button" disabled={modelTesting} onClick={() => onAction("test-models")}><Activity aria-hidden="true" />{modelTesting ? "测试中" : "测试 4 个模型"}</button></div>
@@ -667,6 +700,168 @@ function SettingsView({
   );
 }
 
+function AddSourceModal({
+  snapshot,
+  pending,
+  onClose,
+  onRefresh,
+  onAdd,
+}: {
+  readonly snapshot: TuiSnapshot;
+  readonly pending: boolean;
+  readonly onClose: () => void;
+  readonly onRefresh: () => void;
+  readonly onAdd: (source: TuiNewSourceInput) => void;
+}) {
+  const [kind, setKind] = useState<AudioSourceKind>("system");
+  const [name, setName] = useState("电脑来源");
+  const [icon, setIcon] = useState<AudioSourceIcon>("monitor");
+  const [allSystemAudio, setAllSystemAudio] = useState(true);
+  const [applicationIds, setApplicationIds] = useState<Set<string>>(new Set());
+  const [deviceIds, setDeviceIds] = useState<Set<string>>(
+    new Set(snapshot.microphoneDevices.filter((device) => device.isDefault).map((device) => device.id)),
+  );
+  const [filterQuery, setFilterQuery] = useState("");
+  const dialogRef = useRef<HTMLElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const activeApplications = snapshot.systemAudioApplications.filter((application) => application.active);
+  const normalizedQuery = filterQuery.trim().toLocaleLowerCase();
+  const visibleApplications = normalizedQuery
+    ? activeApplications.filter((application) => `${application.name} ${application.executablePath}`.toLocaleLowerCase().includes(normalizedQuery))
+    : activeApplications;
+  const visibleMicrophones = normalizedQuery
+    ? snapshot.microphoneDevices.filter((device) => device.label.toLocaleLowerCase().includes(normalizedQuery))
+    : snapshot.microphoneDevices;
+
+  useEffect(() => {
+    nameInputRef.current?.focus();
+    const containFocus = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const focusable = [...dialogRef.current.querySelectorAll<HTMLElement>(
+        "button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex='-1'])",
+      )];
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", containFocus);
+    return () => window.removeEventListener("keydown", containFocus);
+  }, [onClose]);
+
+  const chooseKind = (next: AudioSourceKind) => {
+    setKind(next);
+    if (["电脑来源", "麦克风来源", "远程声源"].includes(name)) {
+      setName(next === "system" ? "电脑来源" : next === "microphone" ? "麦克风来源" : "远程声源");
+    }
+    setIcon(next === "system" ? "monitor" : next === "microphone" ? "microphone" : "globe");
+    setFilterQuery("");
+  };
+  const toggleSet = (values: Set<string>, value: string, setter: (next: Set<string>) => void) => {
+    const next = new Set(values);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    setter(next);
+  };
+  const canAdd = Boolean(name.trim())
+    && (kind === "remote" || (kind === "system" ? allSystemAudio || applicationIds.size > 0 : deviceIds.size > 0));
+  const submit = () => {
+    let capture: TuiNewSourceInput["capture"];
+    if (kind === "system") {
+      capture = {
+        kind: "system",
+        allSystemAudio,
+        processes: allSystemAudio ? [] : activeApplications
+          .filter((application) => applicationIds.has(application.id))
+          .flatMap((application) => application.processIds.map((pid) => ({
+            pid,
+            name: application.name,
+            executablePath: application.executablePath,
+          }))),
+      };
+    } else if (kind === "microphone") {
+      capture = { kind: "microphone", deviceIds: [...deviceIds] };
+    } else {
+      capture = { kind: "remote" };
+    }
+    onAdd({ name: name.trim(), icon, capture });
+    onClose();
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <section ref={dialogRef} className="add-source-modal" role="dialog" aria-modal="true" aria-labelledby="add-source-title">
+        <header>
+          <div><h2 id="add-source-title">添加声音来源</h2><p>每个来源拥有独立字幕、录音与保存面板。</p></div>
+          <IconButton icon={X} label="关闭添加来源" onClick={onClose} />
+        </header>
+
+        <div className="source-kind-tabs" role="tablist" aria-label="来源类型">
+          {([[
+            "system", "电脑", MonitorSpeaker,
+          ], [
+            "microphone", "麦克风", Mic,
+          ], [
+            "remote", "其他源", Globe2,
+          ]] as const).map(([value, label, Icon]) => (
+            <button key={value} type="button" role="tab" aria-selected={kind === value} className={kind === value ? "is-active" : undefined} onClick={() => chooseKind(value)}><Icon aria-hidden="true" />{label}</button>
+          ))}
+        </div>
+
+        <div className="source-modal-fields">
+          <label className="source-name-field"><span>来源名称</span><input ref={nameInputRef} value={name} maxLength={64} onChange={(event) => setName(event.target.value)} /></label>
+          <fieldset className="source-icon-picker">
+            <legend>预设图标</legend>
+            <div>{(Object.keys(SOURCE_ICONS) as AudioSourceIcon[]).map((value) => {
+              const Icon = SOURCE_ICONS[value];
+              return <button key={value} type="button" className={icon === value ? "is-active" : undefined} aria-label={`选择 ${value} 图标`} title={value} onClick={() => setIcon(value)}><Icon aria-hidden="true" /></button>;
+            })}</div>
+          </fieldset>
+        </div>
+
+        {kind === "system" ? (
+          <div className="source-selection-block">
+            <label className="all-audio-option"><input type="checkbox" checked={allSystemAudio} onChange={(event) => setAllSystemAudio(event.target.checked)} /><span><strong>全部来源</strong><small>监听电脑内所有播放声音</small></span></label>
+            <div className={`application-selection${allSystemAudio ? " is-disabled" : ""}`}>
+              <div className="selection-heading"><span>正在发声的应用 · 已选 {applicationIds.size}</span><button type="button" disabled={pending} onClick={onRefresh}><RefreshCw aria-hidden="true" />刷新</button></div>
+              {activeApplications.length > 10 ? <label className="source-filter"><Search aria-hidden="true" /><input aria-label="筛选正在发声的应用" placeholder="筛选应用" value={filterQuery} disabled={allSystemAudio} onChange={(event) => setFilterQuery(event.target.value)} /></label> : null}
+              {visibleApplications.length === 0 ? <p>{activeApplications.length === 0 ? "当前没有检测到正在发声的应用。" : "没有匹配的应用。"}</p> : visibleApplications.map((application) => (
+                <label key={application.id}><input type="checkbox" disabled={allSystemAudio} checked={applicationIds.has(application.id)} onChange={() => toggleSet(applicationIds, application.id, setApplicationIds)} /><span><strong>{application.name}</strong><small>{application.executablePath}</small></span><i>正在发声</i></label>
+              ))}
+            </div>
+          </div>
+        ) : kind === "microphone" ? (
+          <div className="source-selection-block">
+            <div className="selection-heading"><span>选择一个或多个麦克风 · 已选 {deviceIds.size}</span><button type="button" disabled={pending} onClick={onRefresh}><RefreshCw aria-hidden="true" />刷新</button></div>
+            <div className="microphone-selection">
+              {snapshot.microphoneDevices.length > 10 ? <label className="source-filter"><Search aria-hidden="true" /><input aria-label="筛选麦克风" placeholder="筛选麦克风" value={filterQuery} onChange={(event) => setFilterQuery(event.target.value)} /></label> : null}
+              {visibleMicrophones.length === 0 ? <p>{snapshot.microphoneDevices.length === 0 ? "没有检测到麦克风。" : "没有匹配的麦克风。"}</p> : visibleMicrophones.map((device) => (
+                <label key={device.id}><input type="checkbox" checked={deviceIds.has(device.id)} onChange={() => toggleSet(deviceIds, device.id, setDeviceIds)} /><span><strong>{device.label}</strong><small>{device.isDefault ? "Windows 默认设备" : "音频输入设备"}</small></span></label>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="remote-source-summary"><Globe2 aria-hidden="true" /><div><strong>局域网采集页面</strong><p>添加后会生成一个带随机令牌的页面地址。其他设备进入页面，选择麦克风并开始或结束采集。</p></div></div>
+        )}
+
+        <footer><button type="button" className="secondary-command" onClick={onClose}>取消</button><button type="button" className="primary-command" disabled={!canAdd || pending} onClick={submit}>添加来源</button></footer>
+      </section>
+    </div>
+  );
+}
+
 function LoadingShell() {
   return <div className="loading-shell" aria-label="正在连接后端" aria-busy="true"><div className="loading-shell__nav" /><div className="loading-shell__content" /></div>;
 }
@@ -676,6 +871,8 @@ export function App() {
   const [page, setPage] = useState<AppPage>(() => readSourcePreference());
   const [panelCollapsed, setPanelCollapsed] = useState(() => window.localStorage.getItem("live-translating:archive-panel") === "collapsed");
   const [dismissedSourceError, setDismissedSourceError] = useState<string>();
+  const [sourceModalOpen, setSourceModalOpen] = useState(false);
+  const modalReturnFocus = useRef<HTMLElement | null>(null);
   const pending = Boolean(pendingAction || snapshot?.transitioning);
   const navigate = (nextPage: AppPage) => {
     setPage(nextPage);
@@ -686,6 +883,15 @@ export function App() {
     window.localStorage.setItem("live-translating:archive-panel", next ? "collapsed" : "open");
     return next;
   });
+  const openSourceModal = useCallback(() => {
+    modalReturnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setSourceModalOpen(true);
+    void invoke("refresh-source-catalog");
+  }, [invoke]);
+  const closeSourceModal = useCallback(() => {
+    setSourceModalOpen(false);
+    window.setTimeout(() => modalReturnFocus.current?.focus(), 0);
+  }, []);
 
   useEffect(() => {
     const handleKeyboard = (event: KeyboardEvent) => {
@@ -700,6 +906,13 @@ export function App() {
     return () => window.removeEventListener("keydown", handleKeyboard);
   }, [controlWindow]);
 
+  useEffect(() => {
+    if (snapshot && page !== "settings" && !snapshot.sources[page]) {
+      const fallback = snapshot.sourceOrder[0];
+      if (fallback) navigate(fallback);
+    }
+  }, [page, snapshot]);
+
   if (loading && !snapshot) return <LoadingShell />;
   if (!snapshot) return <main className="fatal-state"><img src={appIconUrl} alt="" /><h1>LiveTranslating 暂时无法连接</h1><p>{error ?? "没有收到后端状态。"}</p><button className="text-button" type="button" onClick={reconnect}>重新连接</button></main>;
 
@@ -708,11 +921,11 @@ export function App() {
   const sourceError = activeSource?.error && sourceErrorKey !== dismissedSourceError ? activeSource.error : undefined;
   return (
     <main className="desktop-app">
-      <Sidebar page={page} snapshot={snapshot} onNavigate={navigate} onOpenOverlay={() => void controlWindow("open-overlay")} />
+      <Sidebar page={page} snapshot={snapshot} onNavigate={navigate} onOpenOverlay={() => void controlWindow("open-overlay")} onAddSource={openSourceModal} />
       <div className="content-surface">
         {page === "settings" ? (
           <SettingsView snapshot={snapshot} pending={pending} onAction={(name, payload) => void invoke(name, payload)} />
-        ) : (
+        ) : activeSource ? (
           <SourceView
             sourceId={page}
             snapshot={snapshot}
@@ -722,8 +935,17 @@ export function App() {
             onAction={(name, payload) => void invoke(name, payload)}
             onExport={(kind) => void exportArchive(page, kind)}
           />
-        )}
+        ) : null}
       </div>
+      {sourceModalOpen ? (
+        <AddSourceModal
+          snapshot={snapshot}
+          pending={pending}
+          onClose={closeSourceModal}
+          onRefresh={() => void invoke("refresh-source-catalog")}
+          onAdd={(source) => void invoke("add-source", { source })}
+        />
+      ) : null}
       <ToastStack
         bridgeError={error}
         sourceError={sourceError}

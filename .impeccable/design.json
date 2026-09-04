@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-04T15:41:11.2316644+08:00",
+  "generatedAt": "2026-09-04T18:09:16.8180148+08:00",
   "title": "Design System: LiveTranslating",
   "extensions": {
     "colorMeta": {
@@ -37,8 +37,12 @@
     },
     "typographyMeta": {
       "title": { "displayName": "Workspace title", "purpose": "Source and primary section identity." },
+      "source-title": { "displayName": "Source title", "purpose": "Named audio source identity in the fixed transport header." },
+      "dialog-title": { "displayName": "Dialog title", "purpose": "Protected-focus source configuration surface." },
       "body": { "displayName": "Source text", "purpose": "Readable but subordinate source-language paragraphs." },
       "translation": { "displayName": "Translation", "purpose": "Dominant translated paragraph text." },
+      "responsive-translation": { "displayName": "Narrow translation", "purpose": "Dominant translation at the icon-sidebar breakpoint." },
+      "compact-translation": { "displayName": "Compact translation", "purpose": "Latest translation in the compact subtitle window." },
       "label": { "displayName": "Operational label", "purpose": "Controls, state, time, latency, and logs." }
     },
     "shadows": [
@@ -108,7 +112,7 @@
       "White and cool-gray work surfaces with near-black text.",
       "Listening teal is reserved for active state and primary action.",
       "Bilingual paragraphs, not isolated translation cards, are the main content unit.",
-      "Each source page owns its transport and archive controls; the two sources never share panel state.",
+      "Each configured source page owns its transport and archive controls; source state never leaks between pages.",
       "Borders establish structure; shadows are reserved for transient or detached surfaces."
     ],
     "rules": [
@@ -118,7 +122,8 @@
       { "name": "The Flat Workspace Rule", "body": "Persistent page sections never use decorative shadows. Elevation communicates detachment or temporary feedback, not importance.", "section": "elevation" }
     ],
     "dos": [
-      "Do keep computer audio and microphone content on independent pages.",
+      "Do give every computer, microphone, and LAN source an independent page.",
+      "Do keep long source names on one line with ellipsis and preserve their full name in accessible labels and tooltips.",
       "Do group committed sentences into continuous bilingual paragraphs.",
       "Do keep play/pause/stop and archive state independent for each source page.",
       "Do keep operational metadata at 12px or larger and use tabular numerals for time and latency.",

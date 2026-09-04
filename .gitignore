@@ -14,6 +14,7 @@ models/
 recordings/
 archives/
 release/
+release-*/
 .impeccable/build/
 .impeccable/review/
 .impeccable/mocks/

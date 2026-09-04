@@ -27,7 +27,10 @@ let snapshot: TuiSnapshot = {
   sources: {
     system: {
       id: "system",
-      label: "System audio",
+      label: "电脑声音",
+      kind: "system",
+      icon: "monitor",
+      selectionLabel: "全部电脑声音",
       enabled: true,
       phase: previewRecording ? "listening" : "disabled",
       level: previewRecording ? 0.64 : 0,
@@ -37,7 +40,10 @@ let snapshot: TuiSnapshot = {
     },
     microphone: {
       id: "microphone",
-      label: "Microphone",
+      label: "麦克风",
+      kind: "microphone",
+      icon: "microphone",
+      selectionLabel: "麦克风阵列（Intel Smart Sound）",
       enabled: true,
       phase: "disabled",
       level: 0,
@@ -47,9 +53,14 @@ let snapshot: TuiSnapshot = {
       deviceLabel: "麦克风阵列（Intel Smart Sound）",
     },
   },
+  sourceOrder: ["system", "microphone"],
   microphoneDevices: [
     { id: "array", label: "麦克风阵列（Intel Smart Sound）", isDefault: true },
     { id: "headset", label: "HUAWEI USB-C HEADSET" },
+  ],
+  systemAudioApplications: [
+    { id: "chrome", name: "Google Chrome", executablePath: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", processIds: [5324], active: true },
+    { id: "zoom", name: "Zoom", executablePath: "C:\\Program Files\\Zoom\\bin\\Zoom.exe", processIds: [8840], active: true },
   ],
   sourceLanguages,
   targetLanguages,
@@ -134,10 +145,8 @@ let snapshot: TuiSnapshot = {
 };
 
 if (new URLSearchParams(window.location.search).get("previewError") === "1") {
-  snapshot = {
-    ...snapshot,
-    sources: { ...snapshot.sources, system: { ...snapshot.sources.system, phase: "error", error: "电脑声音采集暂时中断，正在等待重新连接。" } },
-  };
+  const system = snapshot.sources.system;
+  if (system) snapshot = { ...snapshot, sources: { ...snapshot.sources, system: { ...system, phase: "error", error: "电脑声音采集暂时中断，正在等待重新连接。" } } };
 }
 
 export function createPreviewBridge(): LiveTranslatingBridge {
@@ -161,7 +170,7 @@ export function createPreviewBridge(): LiveTranslatingBridge {
         ...snapshot,
         notifications: [
           ...snapshot.notifications,
-          { id: `export-${Date.now()}`, kind: "success", message: `${sourceId === "system" ? "电脑声音" : "麦克风"}已导出到 ${destination}` },
+          { id: `export-${Date.now()}`, kind: "success", message: `${snapshot.sources[sourceId]?.label ?? "来源"}已导出到 ${destination}` },
         ],
       };
       publish();
@@ -176,34 +185,41 @@ function reduceSnapshot(current: TuiSnapshot, name: DesktopActionName, payload?:
       ? "recording"
       : name === "pause-session" ? "paused" : "idle";
     const sourceId = payload.sourceId;
+    const source = current.sources[sourceId];
+    const session = current.sessions[sourceId];
+    if (!source || !session) return current;
     const savedNotification = name === "stop-session"
-      ? [{ id: `saved-${Date.now()}`, kind: "success" as const, message: `${sourceId === "system" ? "电脑声音" : "麦克风"}已自动保存` }]
+      ? [{ id: `saved-${Date.now()}`, kind: "success" as const, message: `${source.label}已自动保存` }]
       : [];
     return withAggregate({
       ...current,
       sessions: {
         ...current.sessions,
         [sourceId]: {
-          ...current.sessions[sourceId],
+          ...session,
           phase: nextPhase,
           recording: nextPhase === "recording" || nextPhase === "paused",
         },
       },
       sources: {
         ...current.sources,
-        [sourceId]: { ...current.sources[sourceId], phase: nextPhase === "recording" ? "listening" : nextPhase === "paused" ? "paused" : "disabled" },
+        [sourceId]: { ...source, phase: nextPhase === "recording" ? "listening" : nextPhase === "paused" ? "paused" : "disabled" },
       },
       notifications: [...current.notifications, ...savedNotification],
     });
   }
   if (name === "set-archive-name" && hasSourceName(payload)) {
-    return { ...current, sessions: { ...current.sessions, [payload.sourceId]: { ...current.sessions[payload.sourceId], archive: { ...current.sessions[payload.sourceId].archive, currentName: payload.name } } } };
+    const session = current.sessions[payload.sourceId];
+    if (!session) return current;
+    return { ...current, sessions: { ...current.sessions, [payload.sourceId]: { ...session, archive: { ...session.archive, currentName: payload.name } } } };
   }
   if (name === "dismiss-notification" && hasString(payload, "notificationId")) {
     return { ...current, notifications: current.notifications.filter((item) => item.id !== payload.notificationId) };
   }
   if (name === "set-source-enabled" && hasSourceEnabled(payload)) {
-    return { ...current, sources: { ...current.sources, [payload.sourceId]: { ...current.sources[payload.sourceId], enabled: payload.enabled } } };
+    const source = current.sources[payload.sourceId];
+    if (!source) return current;
+    return { ...current, sources: { ...current.sources, [payload.sourceId]: { ...source, enabled: payload.enabled } } };
   }
   if (name === "set-reviewer" && hasEnabled(payload)) return { ...current, reviewerEnabled: payload.enabled };
   if (name === "set-secondary-translation" && hasEnabled(payload)) return { ...current, secondaryTranslationEnabled: payload.enabled };
@@ -211,12 +227,30 @@ function reduceSnapshot(current: TuiSnapshot, name: DesktopActionName, payload?:
   if (name === "set-terminology-review-model" && hasString(payload, "reviewModel")) return { ...current, terminologyReviewModel: payload.reviewModel === "deepseek-v4-pro" ? "deepseek-v4-pro" : "deepseek-v4-flash" };
   if (name === "set-microphone" && hasString(payload, "deviceId")) {
     const device = current.microphoneDevices.find((item) => item.id === payload.deviceId);
-    return { ...current, sources: { ...current.sources, microphone: { ...current.sources.microphone, deviceId: payload.deviceId, ...(device ? { deviceLabel: device.label } : {}) } } };
+    const microphone = current.sources.microphone;
+    if (!microphone) return current;
+    return { ...current, sources: { ...current.sources, microphone: { ...microphone, deviceId: payload.deviceId, selectionLabel: device?.label ?? microphone.selectionLabel, ...(device ? { deviceLabel: device.label } : {}) } } };
   }
   if (name === "set-target-language" && hasString(payload, "language")) return { ...current, targetLanguage: payload.language };
   if (name === "set-model" && hasString(payload, "model")) return { ...current, model: payload.model as TuiTranslationModel };
   if (name === "test-models") return { ...current, modelHealth: current.modelHealth.map((item) => ({ ...item, status: item.status === "not-configured" ? "not-configured" : "available" })) };
-  if (name === "toggle-source" && hasSource(payload)) return reduceSnapshot(current, "set-source-enabled", { sourceId: payload.sourceId, enabled: !current.sources[payload.sourceId].enabled });
+  if (name === "add-source" && hasNewSource(payload)) {
+    const id = `${payload.source.capture.kind}-preview-${Date.now()}`;
+    const selectionLabel = payload.source.capture.kind === "system"
+      ? payload.source.capture.allSystemAudio ? "全部电脑声音" : `${payload.source.capture.processes.length} 个应用`
+      : payload.source.capture.kind === "microphone" ? `${payload.source.capture.deviceIds.length} 个麦克风` : "局域网设备";
+    return {
+      ...current,
+      sourceOrder: [...current.sourceOrder, id],
+      sources: { ...current.sources, [id]: { id, label: payload.source.name, kind: payload.source.capture.kind, icon: payload.source.icon, selectionLabel, enabled: true, phase: "disabled", level: 0, droppedFrames: 0, ...(payload.source.capture.kind === "remote" ? { remoteUrls: [`http://192.168.1.42:47321/source/previewtoken`] } : {}) } },
+      sessions: { ...current.sessions, [id]: { phase: "idle", recording: false, archive: { rootDirectory: "C:\\LiveTranslating\\archives", currentName: "LiveTranslating_2026-9-4_16-30" } } },
+      paragraphs: { ...(current.paragraphs ?? {}), [id]: [] },
+    };
+  }
+  if (name === "toggle-source" && hasSource(payload)) {
+    const source = current.sources[payload.sourceId];
+    return source ? reduceSnapshot(current, "set-source-enabled", { sourceId: payload.sourceId, enabled: !source.enabled }) : current;
+  }
   if (name === "cycle-model") {
     const index = models.indexOf(current.model);
     return { ...current, model: models[(index + 1) % models.length] ?? "hy-mt2-plus" };
@@ -246,6 +280,9 @@ function hasSourceEnabled(payload: DesktopActionPayload | undefined): payload is
 }
 function hasSourceName(payload: DesktopActionPayload | undefined): payload is { sourceId: TuiSourceId; name: string } {
   return hasSource(payload) && "name" in payload && typeof payload.name === "string";
+}
+function hasNewSource(payload: DesktopActionPayload | undefined): payload is Extract<DesktopActionPayload, { source: unknown }> {
+  return Boolean(payload && "source" in payload && payload.source);
 }
 function hasString<K extends "deviceId" | "language" | "model" | "reviewModel" | "notificationId">(
   payload: DesktopActionPayload | undefined,

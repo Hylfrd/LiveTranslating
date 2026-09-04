@@ -1,5 +1,7 @@
 import type { ApplicationController } from "../../app/application-controller.js";
-import type { TuiReviewModel, TuiSnapshot, TuiTranslationModel } from "../../tui/controller.js";
+import type { AudioSourceId } from "../../audio/types.js";
+import type { TuiNewSourceInput, TuiReviewModel, TuiSnapshot, TuiTranslationModel } from "../../tui/controller.js";
+import { z } from "zod";
 import type {
   DesktopActionName,
   DesktopActionRequest,
@@ -31,12 +33,37 @@ const ACTION_NAMES = new Set<DesktopActionName>([
   "set-archive-name",
   "refresh-pricing",
   "dismiss-notification",
+  "add-source",
+  "refresh-source-catalog",
 ]);
 
 const MODELS: readonly TuiTranslationModel[] = [
   "hy-mt2-plus",
   "hy-mt2-pro",
 ];
+const SOURCE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,127}$/u;
+const sourceIdSchema = z.string().trim().regex(SOURCE_ID_PATTERN);
+const sourceIconSchema = z.enum(["monitor", "microphone", "headphones", "radio", "globe", "video"]);
+const newSourceSchema = z.object({
+  name: z.string().trim().min(1).max(64),
+  icon: sourceIconSchema,
+  capture: z.discriminatedUnion("kind", [
+    z.object({
+      kind: z.literal("system"),
+      allSystemAudio: z.boolean(),
+      processes: z.array(z.object({
+        pid: z.number().int().positive(),
+        name: z.string().trim().min(1).max(256),
+        executablePath: z.string().trim().min(1).max(2048).optional(),
+      })).max(64),
+    }),
+    z.object({
+      kind: z.literal("microphone"),
+      deviceIds: z.array(z.string().trim().min(1).max(2048)).min(1).max(64),
+    }),
+    z.object({ kind: z.literal("remote") }),
+  ]),
+});
 
 export async function dispatchControllerAction(
   controller: ApplicationController,
@@ -126,6 +153,12 @@ export async function dispatchControllerAction(
     case "dismiss-notification":
       controller.dismissNotification(readString(request.payload, "notificationId"));
       break;
+    case "add-source":
+      await controller.addSource(readNewSource(request.payload));
+      break;
+    case "refresh-source-catalog":
+      await controller.refreshSourceCatalog();
+      break;
   }
 
   return controller.getSnapshot();
@@ -138,11 +171,11 @@ function parseRequest(value: unknown): DesktopActionRequest {
   return value as unknown as DesktopActionRequest;
 }
 
-function readSourceId(payload: unknown): "system" | "microphone" {
-  if (!isRecord(payload) || (payload.sourceId !== "system" && payload.sourceId !== "microphone")) {
-    throw new TypeError("toggle-source requires a valid sourceId");
+function readSourceId(payload: unknown): AudioSourceId {
+  if (!isRecord(payload)) {
+    throw new TypeError("Action requires a valid sourceId");
   }
-  return payload.sourceId;
+  return sourceIdSchema.parse(payload.sourceId);
 }
 
 function readDirection(payload: unknown): 1 | -1 {
@@ -179,16 +212,48 @@ function readReviewModel(payload: unknown): TuiReviewModel {
   return payload.reviewModel;
 }
 
+function readNewSource(payload: unknown): TuiNewSourceInput {
+  if (!isRecord(payload)) {
+    throw new TypeError("Action requires a source definition");
+  }
+  const parsed = newSourceSchema.parse(payload.source);
+  if (parsed.capture.kind === "remote") {
+    return { name: parsed.name, icon: parsed.icon, capture: { kind: "remote" } };
+  }
+  if (parsed.capture.kind === "microphone") {
+    return {
+      name: parsed.name,
+      icon: parsed.icon,
+      capture: { kind: "microphone", deviceIds: parsed.capture.deviceIds },
+    };
+  }
+  return {
+    name: parsed.name,
+    icon: parsed.icon,
+    capture: {
+      kind: "system",
+      allSystemAudio: parsed.capture.allSystemAudio,
+      processes: parsed.capture.processes.map((process) => ({
+        pid: process.pid,
+        name: process.name,
+        ...(process.executablePath ? { executablePath: process.executablePath } : {}),
+      })),
+    },
+  };
+}
+
 async function setMicrophone(controller: ApplicationController, deviceId: string): Promise<void> {
   const snapshot = controller.getSnapshot();
   const devices = snapshot.microphoneDevices;
+  const microphone = snapshot.sources.microphone;
+  if (!microphone) throw new Error("Built-in microphone source is unavailable");
   const targetIndex = devices.findIndex((device) => device.id === deviceId);
   if (targetIndex < 0) {
     throw new RangeError("Requested microphone is not available");
   }
   const currentIndex = Math.max(
     0,
-    devices.findIndex((device) => device.id === snapshot.sources.microphone.deviceId),
+    devices.findIndex((device) => device.id === microphone.deviceId),
   );
   await cycleTo(currentIndex, targetIndex, devices.length, (direction) =>
     controller.cycleMicrophoneDevice(direction));

@@ -41,12 +41,12 @@ export function OverlayApp() {
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
       if (event.key === SOURCE_PREFERENCE_KEY) {
-        setSourceId(event.newValue === "microphone" ? "microphone" : "system");
+        setSourceId(event.newValue || "system");
       }
     };
     const handleLocalChange = (event: Event) => {
       const customEvent = event as CustomEvent<TuiSourceId>;
-      setSourceId(customEvent.detail === "microphone" ? "microphone" : "system");
+      setSourceId(customEvent.detail || "system");
     };
     window.addEventListener("storage", handleStorage);
     window.addEventListener(SOURCE_PREFERENCE_EVENT, handleLocalChange);

@@ -2,6 +2,9 @@
 
 ## Evidence
 
+- Dynamic-source implementation capture inspected in the in-app browser at 1280x720 CSS pixels.
+- Responsive implementation captures inspected at 1000x720, 740x700, and 740x500 CSS pixels.
+- Add-source dialog inspected for computer, microphone, and LAN variants, including the operating system's dark color preference.
 - Source main-window truth: `C:/Users/APOSTR~1/AppData/Local/Temp/codex-clipboard-fd2f6afe-81eb-45bc-923d-a90d3be16d45.png` (2874x1532).
 - Source settings truth: `C:/Users/APOSTR~1/AppData/Local/Temp/codex-clipboard-b4fe6a0b-2a62-4ceb-af63-0c381584262f.png` (2424x804).
 - Source utility-panel reference: `C:/Users/APOSTR~1/AppData/Local/Temp/codex-clipboard-8fbbf152-4390-404d-a9b9-f2a276d93c5c.png`.
@@ -24,6 +27,8 @@ The settings view retains the incumbent unframed ruled sheet while removing sour
 - Archive rail: the current source owns name, state, recent archive, collapse, and three export controls. Switching source changes the panel data.
 - Transcript: target-language-dominant source paragraphs omit the duplicate translation line.
 - Settings: selectors, switches, billing rows, price-reference status, source health, and model health remain aligned and readable.
+- Dynamic sources: the scrollable navigation list keeps Add source fixed below it; long source names truncate without changing the 72px header.
+- Add source: computer applications and microphones use multi-select rows, all-audio disables application rows, and the LAN variant explains its generated page.
 
 ## Interaction Evidence
 
@@ -33,10 +38,12 @@ The settings view retains the incumbent unframed ruled sheet while removing sour
 - Parallel translation toggle and four-model health-test action passed.
 - Minimum-window body width matched the 960px viewport with no horizontal overflow.
 - Browser console produced no warnings or errors.
+- Dynamic source creation, navigation, modal focus containment, and narrow icon-rail labels passed.
+- Medium and narrow headers retained right-aligned transport controls without wrapping or overlapping the archive rail.
 
 ## Findings
 
-No actionable P0, P1, or P2 visual or interaction findings remain.
+No actionable P0, P1, or P2 visual or interaction findings remain. The old header meter implementation was removed rather than hidden.
 
 The dark Codex panel was used only as an information-architecture reference. Keeping the archive rail light is an intentional match to LiveTranslating's established white/cool-gray design language.
 
@@ -47,5 +54,6 @@ The dark Codex panel was used only as an information-architecture reference. Kee
 ## Follow-up Polish
 
 - P3: compact subtitle-window redesign remains intentionally deferred by the user.
+- Browser microphone APIs require trusted HTTPS on non-loopback LAN origins; the remote page is reverse-proxy compatible and reports the recovery requirement when opened over insecure HTTP.
 
 final result: passed

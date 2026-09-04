@@ -12,6 +12,7 @@ import {
 } from "electron";
 
 import type { ApplicationController } from "../../app/application-controller.js";
+import type { AudioSourceId } from "../../audio/types.js";
 import type { TuiSnapshot } from "../../tui/controller.js";
 import type {
   DesktopExportKind,
@@ -214,7 +215,8 @@ function registerIpcHandlers(): void {
     }
     if (
       !isRecord(rawRequest)
-      || (rawRequest.sourceId !== "system" && rawRequest.sourceId !== "microphone")
+      || typeof rawRequest.sourceId !== "string"
+      || !requireController().getSnapshot().sources[rawRequest.sourceId]
       || typeof rawRequest.kind !== "string"
       || !EXPORT_KINDS.has(rawRequest.kind as DesktopExportKind)
     ) {
@@ -237,7 +239,7 @@ function unregisterIpcHandlers(): void {
 
 async function exportArchive(
   owner: BrowserWindow,
-  sourceId: "system" | "microphone",
+  sourceId: AudioSourceId,
   kind: DesktopExportKind,
 ): Promise<DesktopExportResult> {
   const descriptor = requireController().archiveExportPath(sourceId, kind);
