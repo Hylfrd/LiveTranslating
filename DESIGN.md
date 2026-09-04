@@ -117,9 +117,9 @@ components:
 
 > A quiet, ruled Windows workspace where live translation owns the reading field and operational controls stay compact, factual, and close to native desktop expectations.
 
-The interface uses a fixed navigation rail, a 72px source transport header, an unframed transcript field, and a collapsible archive rail. This structure is established in [App.tsx](src/desktop/renderer/App.tsx) and [styles.css](src/desktop/renderer/styles.css); it is deliberately closer to a working interpreter console than a card dashboard.
+The interface uses a fixed navigation rail, a 72px source transport header, an unframed transcript field, and a collapsible quick-export rail. A separate recordings manager owns completed files, while structured logs use their own window. This structure is established in [App.tsx](src/desktop/renderer/App.tsx), [LogApp.tsx](src/desktop/renderer/LogApp.tsx), and [styles.css](src/desktop/renderer/styles.css); it is deliberately closer to a working interpreter console than a card dashboard.
 
-The compact window preserves the same hierarchy at smaller scale: subdued source text, strong translated text, and Windows-style controls. Its implementation lives in [OverlayApp.tsx](src/desktop/renderer/OverlayApp.tsx).
+The compact window preserves the same hierarchy at smaller scale: the newest entry leads at the top with the strongest translated text, older entries continue below in a scrollable history, and Windows-style controls remain fixed above them. Its implementation lives in [OverlayApp.tsx](src/desktop/renderer/OverlayApp.tsx).
 
 **Key Characteristics:**
 
@@ -153,13 +153,13 @@ The application uses the Windows-native Segoe UI Variable stack, with Microsoft 
 
 The large window is a two-column grid: a 224px sidebar and a fluid content field. Source pages divide the fluid field into a transcript and a 300px archive rail, which can collapse to 48px. At 1040px the sidebar contracts to 190px and the archive rail to 270px; at 760px navigation becomes a 72px icon rail. These breakpoints and dimensions are defined in [styles.css](src/desktop/renderer/styles.css).
 
-Each source owns a separate page, session lifecycle, subtitle flow, and archive panel. The sidebar divides into a fixed brand row, a scrollable source list, a fixed Add source command, and bottom utilities. The 72px source header contains identity, a single factual selection summary, latency, dropped frames, and play/pause/stop transport; audio meters are intentionally absent. At the 760px icon-rail breakpoint, the selection summary moves beneath the source name and metadata recedes without increasing header height. Paragraph content is centered to 820px with a maximum text measure of 74 characters. Settings use one unframed 960px sheet with ruled sections.
+Each source owns a separate page, session lifecycle, subtitle flow, and quick-export panel. The sidebar divides into a fixed brand row, a scrollable source list, a fixed Add source command, and bottom Recordings/Settings utilities. The 72px source header groups its unboxed source icon, name, state, and concrete input on the left; latency, subtitle-window access, and play/pause/stop stay right aligned. Audio meters are intentionally absent. At the 760px icon-rail breakpoint, secondary metadata recedes without increasing header height. Paragraph content is centered to 820px with a maximum text measure of 74 characters. Settings and the recordings manager use separate unframed work surfaces.
 
 The Add source dialog is the only protected-focus configuration surface. It keeps type, name, icon, and concrete input selection in that order; the selection body scrolls independently while header and footer remain reachable. Computer and microphone inputs share the same dense multi-select row pattern, and lists above ten entries add filtering without changing source semantics.
 
 Remote pages use one slim access band above the transcript: teal on a working private HTTPS endpoint and the existing error surface when only an insecure fallback is available. The band always states the actual access boundary and never presents HTTP browser capture as operational.
 
-The compact surface is designed for a 760x320 window. Its 34px custom title bar remains fixed above a scrolling subtitle stack that keeps the latest three entries at the bottom.
+The compact surface is designed for a 760x320 window and initially sits at the current display's top-right work area. Its 34px custom title bar remains fixed above a newest-first stack of up to 160 entries; updates return the scrolling content to the top.
 
 ## Elevation & Depth
 
@@ -179,7 +179,7 @@ Navigation is a dense, scrollable vertical list with a dark active row, muted in
 
 Transcript paragraphs are unframed. Timestamp and review state form a 12px metadata row, followed by muted source text and the larger translation. Toasts are the only in-app error prompt and leave via transform and opacity without reflowing the page.
 
-The source archive rail is a full-height utility surface rather than a floating card. It provides one filename field, current session state, three file outcomes, recent archive metadata, and three export commands; collapsing it leaves a 48px reopen rail.
+The source archive rail is a full-height utility surface rather than a floating card. It provides one filename field, one archive-folder command, and three quick export commands; collapsing it leaves a 48px reopen rail. Completed sessions move to an unframed recordings list where three color-coded asset controls form one bundle. Runtime logs use a separate newest-first table with level, source, search, and follow filters.
 
 ## Do's and Don'ts
 
@@ -187,6 +187,8 @@ The source archive rail is a full-height utility surface rather than a floating 
 
 - **Do** give every computer, microphone, and LAN source an independent page.
 - **Do** keep long source names on one line with ellipsis and preserve their full name in accessible labels and tooltips.
+- **Do** treat matching audio, source Markdown, and bilingual Markdown names as one archive bundle.
+- **Do** keep the latest compact subtitle first in both DOM and visual order.
 - **Do** group committed sentences into continuous bilingual paragraphs.
 - **Do** keep play/pause/stop and archive state independent for each source page.
 - **Do** keep operational metadata at 12px or larger and use tabular numerals for time and latency.
@@ -203,10 +205,12 @@ The source archive rail is a full-height utility surface rather than a floating 
 
 - [ ] One active source page fills the content surface; every other source is reachable from the scrollable sidebar.
 - [ ] Add source stays visible below the source list and Settings stays fixed at the bottom.
+- [ ] Recordings is reachable beside Settings and groups all available session artifacts without hiding incomplete bundles.
 - [ ] The source header contains no decorative audio meter and remains exactly 72px at supported breakpoints.
 - [ ] Translation remains the largest content text and wraps without overlap.
 - [ ] The source header shows only play while idle, then pause/resume and stop while active.
 - [ ] The current source's archive rail can collapse and reopen without resizing its controls.
 - [ ] Settings remain a single ruled sheet without a right rail.
+- [ ] Settings links to a dedicated log window rather than embedding a second scroll region.
 - [ ] All controls have hover, disabled, and focus-visible states.
 - [ ] Motion is disabled or shortened by the existing `prefers-reduced-motion` rule.

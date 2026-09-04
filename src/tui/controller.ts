@@ -109,6 +109,17 @@ export interface TuiArchivedSession {
   readonly translationPath: string;
 }
 
+export interface TuiArchivedBundle {
+  readonly name: string;
+  readonly savedAt: string;
+  readonly sourceId?: TuiSourceId;
+  readonly sourceName?: string;
+  readonly audioAvailable: boolean;
+  readonly audioTrackCount: number;
+  readonly transcriptionAvailable: boolean;
+  readonly translationAvailable: boolean;
+}
+
 export interface TuiArchiveState {
   readonly rootDirectory: string;
   readonly currentName: string;
@@ -150,6 +161,7 @@ export interface TuiSnapshot {
   readonly model: TuiTranslationModel;
   readonly recording: boolean;
   readonly sessions: Readonly<Record<TuiSourceId, TuiSourceSessionState>>;
+  readonly archives: readonly TuiArchivedBundle[];
   readonly billing: BillingSnapshot;
   readonly notifications: readonly TuiNotification[];
   readonly reviewerEnabled: boolean;
@@ -190,6 +202,8 @@ export interface TuiController {
   cycleTerminologyReviewModel(direction?: 1 | -1): TuiActionResult;
   testModels(): TuiActionResult;
   setArchiveName(sourceId: TuiSourceId, name: string): TuiActionResult;
+  renameArchive(currentName: string, nextName: string): TuiActionResult;
+  refreshArchives(): TuiActionResult;
   refreshPricing(): TuiActionResult;
   dismissNotification(id: string): TuiActionResult;
   addSource(input: TuiNewSourceInput): TuiActionResult;

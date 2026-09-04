@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-04T18:09:16.8180148+08:00",
+  "generatedAt": "2026-09-04T19:36:09.5301245+08:00",
   "title": "Design System: LiveTranslating",
   "extensions": {
     "colorMeta": {
@@ -100,7 +100,7 @@
     {
       "name": "Source Archive Rail",
       "kind": "custom",
-      "description": "A full-height, source-specific save and export surface that collapses to a narrow reopen rail.",
+      "description": "A full-height, source-specific naming and quick-export surface that collapses to a narrow reopen rail.",
       "html": "<aside class=\"ds-archive\"><header>SAVE AREA</header><label>SESSION NAME<input value=\"LiveTranslating_2026-9-4_13-38\"></label><button>EXPORT TRANSCRIPT</button></aside>",
       "css": ".ds-archive { display: flex; width: 300px; min-height: 320px; padding: 16px; flex-direction: column; gap: 16px; border-left: 1px solid var(--rule-strong); color: var(--ink); background: #f5f6f6; font: 600 12px 'Segoe UI', sans-serif; } .ds-archive header { font-size: 14px; } .ds-archive label { display: flex; flex-direction: column; gap: 6px; color: var(--ink-faint); } .ds-archive input, .ds-archive button { height: 34px; padding: 0 9px; border: 1px solid var(--rule-strong); border-radius: 5px; color: var(--ink); background: #fff; } .ds-archive button:hover { border-color: #9da7a8; background: #fafbfb; } .ds-archive input:focus-visible, .ds-archive button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }"
     }
@@ -112,7 +112,7 @@
       "White and cool-gray work surfaces with near-black text.",
       "Listening teal is reserved for active state and primary action.",
       "Bilingual paragraphs, not isolated translation cards, are the main content unit.",
-      "Each configured source page owns its transport and archive controls; source state never leaks between pages.",
+      "Each configured source page owns its transport and quick-export controls; completed bundles move to Recordings.",
       "Borders establish structure; shadows are reserved for transient or detached surfaces."
     ],
     "rules": [
@@ -124,6 +124,8 @@
     "dos": [
       "Do give every computer, microphone, and LAN source an independent page.",
       "Do keep long source names on one line with ellipsis and preserve their full name in accessible labels and tooltips.",
+      "Do treat matching audio, source Markdown, and bilingual Markdown names as one archive bundle.",
+      "Do keep the latest compact subtitle first in both DOM and visual order.",
       "Do group committed sentences into continuous bilingual paragraphs.",
       "Do keep play/pause/stop and archive state independent for each source page.",
       "Do keep operational metadata at 12px or larger and use tabular numerals for time and latency.",

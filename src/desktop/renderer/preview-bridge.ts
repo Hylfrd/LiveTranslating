@@ -102,6 +102,28 @@ let snapshot: TuiSnapshot = {
       },
     },
   },
+  archives: [
+    {
+      name: "LiveTranslating_2026-9-4_12-52",
+      savedAt: "2026-09-04T04:58:00.000Z",
+      sourceId: "system",
+      sourceName: "电脑声音",
+      audioAvailable: true,
+      audioTrackCount: 2,
+      transcriptionAvailable: true,
+      translationAvailable: true,
+    },
+    {
+      name: "LiveTranslating_2026-9-4_11-20",
+      savedAt: "2026-09-04T03:29:00.000Z",
+      sourceId: "microphone",
+      sourceName: "麦克风",
+      audioAvailable: true,
+      audioTrackCount: 1,
+      transcriptionAvailable: true,
+      translationAvailable: true,
+    },
+  ],
   billing: {
     sessionStartedAt: "2026-09-04T05:38:00.000Z",
     models: [
@@ -176,6 +198,20 @@ export function createPreviewBridge(): LiveTranslatingBridge {
       publish();
       return { canceled: false, kind, destination };
     },
+    manageArchive: async (request) => {
+      if (request.operation === "delete" && request.archiveName) {
+        snapshot = {
+          ...snapshot,
+          archives: snapshot.archives.filter((archive) => archive.name !== request.archiveName),
+          notifications: [
+            ...snapshot.notifications,
+            { id: `deleted-${Date.now()}`, kind: "success", message: `已将 ${request.archiveName} 移到回收站` },
+          ],
+        };
+        publish();
+      }
+      return snapshot;
+    },
   };
 }
 
@@ -212,6 +248,18 @@ function reduceSnapshot(current: TuiSnapshot, name: DesktopActionName, payload?:
     const session = current.sessions[payload.sourceId];
     if (!session) return current;
     return { ...current, sessions: { ...current.sessions, [payload.sourceId]: { ...session, archive: { ...session.archive, currentName: payload.name } } } };
+  }
+  if (name === "rename-archive" && hasArchiveRename(payload)) {
+    return {
+      ...current,
+      archives: current.archives.map((archive) => archive.name === payload.archiveName
+        ? { ...archive, name: payload.nextName }
+        : archive),
+      notifications: [
+        ...current.notifications,
+        { id: `renamed-${Date.now()}`, kind: "success", message: `已重命名为 ${payload.nextName}` },
+      ],
+    };
   }
   if (name === "dismiss-notification" && hasString(payload, "notificationId")) {
     return { ...current, notifications: current.notifications.filter((item) => item.id !== payload.notificationId) };
@@ -265,8 +313,9 @@ function withAggregate(value: TuiSnapshot): TuiSnapshot {
 }
 
 function previewWindowControl(command: WindowControlCommand): void {
-  const params = new URLSearchParams({ surface: command === "open-overlay" ? "compact" : "main", preview: "1" });
-  if (command === "open-overlay" || command === "expand-overlay") window.location.assign(`${window.location.pathname}?${params.toString()}`);
+  const surface = command === "open-overlay" ? "compact" : command === "open-logs" ? "logs" : "main";
+  const params = new URLSearchParams({ surface, preview: "1" });
+  if (["open-overlay", "open-logs", "expand-overlay"].includes(command)) window.location.assign(`${window.location.pathname}?${params.toString()}`);
 }
 
 function hasEnabled(payload: DesktopActionPayload | undefined): payload is { enabled: boolean } {
@@ -283,6 +332,10 @@ function hasSourceName(payload: DesktopActionPayload | undefined): payload is { 
 }
 function hasNewSource(payload: DesktopActionPayload | undefined): payload is Extract<DesktopActionPayload, { source: unknown }> {
   return Boolean(payload && "source" in payload && payload.source);
+}
+function hasArchiveRename(payload: DesktopActionPayload | undefined): payload is { archiveName: string; nextName: string } {
+  return Boolean(payload && "archiveName" in payload && "nextName" in payload
+    && typeof payload.archiveName === "string" && typeof payload.nextName === "string");
 }
 function hasString<K extends "deviceId" | "language" | "model" | "reviewModel" | "notificationId">(
   payload: DesktopActionPayload | undefined,

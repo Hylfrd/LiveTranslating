@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { TuiSnapshot } from "../../tui/controller.js";
 import type {
+  ArchiveOperationRequest,
   DesktopActionName,
   DesktopActionPayload,
   DesktopExportKind,
@@ -18,6 +19,7 @@ export interface DesktopBridgeState {
   readonly connected: boolean;
   invoke(name: DesktopActionName, payload?: DesktopActionPayload): Promise<void>;
   exportArchive(sourceId: TuiSourceId, kind: DesktopExportKind): Promise<DesktopExportResult | undefined>;
+  manageArchive(request: ArchiveOperationRequest): Promise<void>;
   controlWindow(command: WindowControlCommand): Promise<void>;
   clearError(): void;
   reconnect(): void;
@@ -124,6 +126,22 @@ export function useDesktopBridge(): DesktopBridgeState {
     }
   }, [bridge]);
 
+  const manageArchive = useCallback(async (request: ArchiveOperationRequest) => {
+    if (!bridge) {
+      setError("桌面桥接未连接，无法管理归档。");
+      return;
+    }
+    setPendingAction(`archive-${request.operation}`);
+    setError(undefined);
+    try {
+      await bridge.manageArchive(request);
+    } catch (reason) {
+      setError(`归档操作失败：${toMessage(reason)}`);
+    } finally {
+      if (mounted.current) setPendingAction(undefined);
+    }
+  }, [bridge]);
+
   return {
     snapshot,
     loading,
@@ -132,6 +150,7 @@ export function useDesktopBridge(): DesktopBridgeState {
     connected: Boolean(bridge),
     invoke,
     exportArchive,
+    manageArchive,
     controlWindow,
     clearError: () => setError(undefined),
     reconnect: () => setConnectionRevision((value) => value + 1),

@@ -32,6 +32,7 @@ export type DesktopActionName =
   | "set-terminology-review-model"
   | "test-models"
   | "set-archive-name"
+  | "rename-archive"
   | "refresh-pricing"
   | "dismiss-notification"
   | "add-source"
@@ -49,6 +50,7 @@ export type DesktopActionPayload =
   | { readonly reviewModel: TuiReviewModel }
   | { readonly name: string }
   | { readonly notificationId: string }
+  | { readonly archiveName: string; readonly nextName: string }
   | { readonly source: TuiNewSourceInput };
 
 export type DesktopExportKind = "audio" | "transcription" | "translation";
@@ -59,8 +61,17 @@ export interface DesktopExportResult {
   readonly destination?: string;
 }
 
+export type ArchiveOperation = "open-root" | "open" | "show-in-folder" | "delete";
+
+export interface ArchiveOperationRequest {
+  readonly operation: ArchiveOperation;
+  readonly archiveName?: string;
+  readonly kind?: DesktopExportKind;
+}
+
 export type WindowControlCommand =
   | "open-overlay"
+  | "open-logs"
   | "expand-overlay"
   | "minimize"
   | "close";
@@ -71,6 +82,7 @@ export interface LiveTranslatingBridge {
   action(name: DesktopActionName, payload?: DesktopActionPayload): Promise<DesktopSnapshot>;
   windowControl(command: WindowControlCommand): Promise<void>;
   exportArchive(sourceId: TuiSourceId, kind: DesktopExportKind): Promise<DesktopExportResult>;
+  manageArchive(request: ArchiveOperationRequest): Promise<DesktopSnapshot>;
 }
 
 declare global {

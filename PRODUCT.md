@@ -54,13 +54,18 @@ context, and delayed revision state consistent across all surfaces.
 - Expose microphone device, target language, Hy-MT2 translation model, parallel
   translation, two-stage DeepSeek review, model health, token/cost estimates,
   continuous subtitle paragraphs, per-source archives, exports, and structured logs.
-- Each source page owns independent play, pause, stop, naming, automatic save,
-  recent archive, and export state while sharing the same archive directories.
+- Each source page owns independent play, pause, stop, naming, automatic save, and
+  quick export state while sharing the same archive directories.
+- Group completed audio, source Markdown, and bilingual Markdown by session name in a
+  recordings manager with filtering, open, reveal, bundle rename, and recycle-bin deletion.
+- Open structured runtime logs in a dedicated filterable window instead of nesting a log scroller in Settings.
 - Suppress duplicate target-language output when a committed source paragraph is
   already predominantly in the target language.
 - Do not maintain a runtime glossary or persist terminology inferred by a model.
 - The compact window has only an expand control at top left and custom minimize and
   close controls at top right.
+- The compact window renders the newest subtitle first, gives it the strongest size,
+  automatically returns to the top on updates, and keeps older entries scrollable below it.
 - Closing the compact window keeps translation running in the background and leaves
   the main application minimized in the taskbar.
 - The compact window is draggable and does not default to always-on-top or click-through.

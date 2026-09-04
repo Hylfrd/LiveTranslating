@@ -8,6 +8,8 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  screen,
+  shell,
   type IpcMainInvokeEvent,
 } from "electron";
 
@@ -17,6 +19,7 @@ import type { TuiSnapshot } from "../../tui/controller.js";
 import type {
   DesktopExportKind,
   DesktopExportResult,
+  DesktopArchiveRequest,
   DesktopWindowCommand,
 } from "../preload/contract.js";
 import { dispatchControllerAction } from "./controller-actions.js";
@@ -26,19 +29,23 @@ const SNAPSHOT_UPDATED_CHANNEL = "live-translating:snapshot:updated";
 const ACTION_CHANNEL = "live-translating:controller:action";
 const WINDOW_CHANNEL = "live-translating:window:control";
 const EXPORT_CHANNEL = "live-translating:archive:export";
+const ARCHIVE_MANAGE_CHANNEL = "live-translating:archive:manage";
 const WINDOW_COMMANDS = new Set<DesktopWindowCommand>([
   "open-overlay",
+  "open-logs",
   "expand-overlay",
   "minimize",
   "close",
 ]);
 const EXPORT_KINDS = new Set<DesktopExportKind>(["audio", "transcription", "translation"]);
+const ARCHIVE_OPERATIONS = new Set(["open-root", "open", "show-in-folder", "delete"] as const);
 
-type Surface = "main" | "compact";
+type Surface = "main" | "compact" | "logs";
 
 let controller: ApplicationController | undefined;
 let mainWindow: BrowserWindow | undefined;
 let compactWindow: BrowserWindow | undefined;
+let logWindow: BrowserWindow | undefined;
 let unsubscribeSnapshots: (() => void) | undefined;
 let actionTail: Promise<void> = Promise.resolve();
 let pendingSnapshot: TuiSnapshot | undefined;
@@ -137,6 +144,7 @@ function createWindows(): void {
 
   secureWindow(mainWindow);
   secureWindow(compactWindow);
+  positionCompactWindow();
 
   mainWindow.once("ready-to-show", () => mainWindow?.show());
   mainWindow.on("close", (event) => {
@@ -159,13 +167,15 @@ function createWindows(): void {
     compactWindow = undefined;
   });
 
-  for (const window of managedWindows()) {
-    window.webContents.on("did-finish-load", () => {
-      if (controller && !window.isDestroyed()) {
-        window.webContents.send(SNAPSHOT_UPDATED_CHANNEL, controller.getSnapshot());
-      }
-    });
-  }
+  for (const window of managedWindows()) bindSnapshotWindow(window);
+}
+
+function bindSnapshotWindow(window: BrowserWindow): void {
+  window.webContents.on("did-finish-load", () => {
+    if (controller && !window.isDestroyed()) {
+      window.webContents.send(SNAPSHOT_UPDATED_CHANNEL, controller.getSnapshot());
+    }
+  });
 }
 
 function secureWindow(window: BrowserWindow): void {
@@ -228,6 +238,14 @@ function registerIpcHandlers(): void {
       rawRequest.kind as DesktopExportKind,
     );
   });
+
+  ipcMain.handle(ARCHIVE_MANAGE_CHANNEL, (event, rawRequest: unknown) => {
+    const senderWindow = assertTrustedSender(event);
+    if (senderWindow !== mainWindow) {
+      throw new Error("Archive management is available only in the main window");
+    }
+    return enqueueControllerAction(() => manageArchive(senderWindow, rawRequest));
+  });
 }
 
 function unregisterIpcHandlers(): void {
@@ -235,6 +253,68 @@ function unregisterIpcHandlers(): void {
   ipcMain.removeHandler(ACTION_CHANNEL);
   ipcMain.removeHandler(WINDOW_CHANNEL);
   ipcMain.removeHandler(EXPORT_CHANNEL);
+  ipcMain.removeHandler(ARCHIVE_MANAGE_CHANNEL);
+}
+
+async function manageArchive(owner: BrowserWindow, rawRequest: unknown): Promise<TuiSnapshot> {
+  if (!isRecord(rawRequest) || typeof rawRequest.operation !== "string"
+    || !ARCHIVE_OPERATIONS.has(rawRequest.operation as DesktopArchiveRequest["operation"])) {
+    throw new TypeError("Unsupported archive operation");
+  }
+  const operation = rawRequest.operation as DesktopArchiveRequest["operation"];
+  const activeController = requireController();
+  if (operation === "open-root") {
+    await openExternalPath(activeController.archiveRootDirectory());
+    return activeController.getSnapshot();
+  }
+  if (typeof rawRequest.archiveName !== "string" || !activeController.archiveExists(rawRequest.archiveName)) {
+    throw new TypeError("Archive operation requires a known archive name");
+  }
+  const archiveName = rawRequest.archiveName;
+  if (operation === "delete") {
+    const confirmation = await dialog.showMessageBox(owner, {
+      type: "warning",
+      title: "删除归档",
+      message: `将“${archiveName}”移到回收站？`,
+      detail: "录音、原文稿和双语译稿会作为一组删除，可以从 Windows 回收站恢复。",
+      buttons: ["取消", "移到回收站"],
+      cancelId: 0,
+      defaultId: 0,
+      noLink: true,
+    });
+    if (confirmation.response === 1) {
+      const results = await Promise.allSettled(
+        activeController.archiveArtifactPaths(archiveName).map((artifact) => shell.trashItem(artifact)),
+      );
+      await activeController.refreshArchives();
+      const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+      if (failures.length > 0) {
+        throw new AggregateError(failures.map((result) => result.reason), "Some archive files could not be moved to the recycle bin");
+      }
+      activeController.notifyArchiveAction(`已将 ${archiveName} 移到回收站`);
+    }
+    return activeController.getSnapshot();
+  }
+  const requestedKind = typeof rawRequest.kind === "string" && EXPORT_KINDS.has(rawRequest.kind as DesktopExportKind)
+    ? rawRequest.kind as DesktopExportKind
+    : undefined;
+  const descriptor = requestedKind
+    ? activeController.archiveArtifactPath(archiveName, requestedKind)
+    : (["audio", "translation", "transcription"] as const)
+        .map((kind) => activeController.archiveArtifactPath(archiveName, kind))
+        .find((item) => item !== undefined);
+  if (!descriptor) throw new Error("Archive file is missing");
+  if (operation === "show-in-folder") {
+    shell.showItemInFolder(descriptor.path);
+  } else {
+    await openExternalPath(descriptor.path);
+  }
+  return activeController.getSnapshot();
+}
+
+async function openExternalPath(targetPath: string): Promise<void> {
+  const error = await shell.openPath(targetPath);
+  if (error) throw new Error(error);
 }
 
 async function exportArchive(
@@ -305,6 +385,9 @@ async function controlWindow(sender: BrowserWindow, command: DesktopWindowComman
     case "open-overlay":
       openOverlay();
       break;
+    case "open-logs":
+      await openLogs();
+      break;
     case "expand-overlay":
       expandOverlay();
       break;
@@ -319,6 +402,51 @@ async function controlWindow(sender: BrowserWindow, command: DesktopWindowComman
       }
       break;
   }
+}
+
+async function openLogs(): Promise<void> {
+  if (!logWindow || logWindow.isDestroyed()) {
+    const icon = resolveWindowIcon();
+    logWindow = new BrowserWindow({
+      width: 940,
+      height: 660,
+      minWidth: 720,
+      minHeight: 480,
+      show: false,
+      frame: true,
+      backgroundColor: "#ffffff",
+      autoHideMenuBar: true,
+      skipTaskbar: false,
+      title: "LiveTranslating - 运行日志",
+      ...(icon ? { icon } : {}),
+      webPreferences: {
+        preload: fileURLToPath(new URL("../preload/index.cjs", import.meta.url)),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        webSecurity: true,
+      },
+    });
+    secureWindow(logWindow);
+    bindSnapshotWindow(logWindow);
+    logWindow.on("closed", () => { logWindow = undefined; });
+    await loadSurface(logWindow, "logs");
+  }
+  if (logWindow.isMinimized()) logWindow.restore();
+  logWindow.show();
+  logWindow.focus();
+}
+
+function positionCompactWindow(): void {
+  if (!compactWindow || compactWindow.isDestroyed()) return;
+  const display = mainWindow
+    ? screen.getDisplayMatching(mainWindow.getBounds())
+    : screen.getPrimaryDisplay();
+  const [width = 760] = compactWindow.getSize();
+  compactWindow.setPosition(
+    display.workArea.x + display.workArea.width - width - 16,
+    display.workArea.y + 16,
+  );
 }
 
 function openOverlay(): void {
@@ -389,7 +517,7 @@ function broadcastSnapshot(snapshot: TuiSnapshot): void {
 }
 
 function managedWindows(): BrowserWindow[] {
-  return [mainWindow, compactWindow].filter(
+  return [mainWindow, compactWindow, logWindow].filter(
     (window): window is BrowserWindow => window !== undefined && !window.isDestroyed(),
   );
 }

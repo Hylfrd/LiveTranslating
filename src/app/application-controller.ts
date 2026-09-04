@@ -265,6 +265,7 @@ export class ApplicationController implements TuiController {
       sessions: Object.fromEntries(
         this.sourceOrder.map((sourceId) => [sourceId, this.sourceSessionSnapshot(sourceId)]),
       ),
+      archives: this.recording.archives(),
       billing: this.billing.getSnapshot(),
       notifications: this.notifications,
       reviewerEnabled: this.reviewerEnabled,
@@ -642,6 +643,20 @@ export class ApplicationController implements TuiController {
     this.emit();
   }
 
+  async renameArchive(currentName: string, nextName: string): Promise<void> {
+    return this.withLifecycle(async () => {
+      const renamed = await this.recording.renameArchive(currentName, nextName);
+      this.pushNotification("success", `已重命名为 ${renamed}`);
+      this.logger.info(`Renamed archive ${currentName} to ${renamed}`, "recording");
+      this.emit();
+    });
+  }
+
+  async refreshArchives(): Promise<void> {
+    await this.recording.refreshArchives();
+    this.emit();
+  }
+
   async refreshPricing(): Promise<void> {
     const refresh = this.billing.refreshPricingReference();
     this.emit();
@@ -661,8 +676,34 @@ export class ApplicationController implements TuiController {
     return this.recording.exportPath(sourceId, kind);
   }
 
+  archiveRootDirectory(): string {
+    return this.recording.archiveRoot;
+  }
+
+  archiveArtifactPath(
+    archiveName: string,
+    kind: ArchiveExportKind,
+  ): ReturnType<RecordingManager["artifactPath"]> {
+    return this.recording.artifactPath(archiveName, kind);
+  }
+
+  archiveArtifactPaths(archiveName: string): string[] {
+    return (["audio", "transcription", "translation"] as const).flatMap((kind) => {
+      const artifact = this.recording.artifactPath(archiveName, kind);
+      return artifact ? [artifact.path] : [];
+    });
+  }
+
+  archiveExists(archiveName: string): boolean {
+    return this.recording.archives().some((archive) => archive.name === archiveName);
+  }
+
   notifyExport(destination: string): void {
     this.pushNotification("success", `已导出到 ${destination}`);
+  }
+
+  notifyArchiveAction(message: string): void {
+    this.pushNotification("success", message);
   }
 
   async shutdown(): Promise<void> {

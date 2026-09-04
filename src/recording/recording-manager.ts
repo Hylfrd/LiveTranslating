@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { AudioSourceId } from "../audio/types.js";
@@ -15,6 +15,17 @@ export interface ArchivedSession {
   readonly audioDirectory: string;
   readonly transcriptionPath: string;
   readonly translationPath: string;
+}
+
+export interface ArchivedBundle {
+  readonly name: string;
+  readonly savedAt: string;
+  readonly sourceId?: AudioSourceId;
+  readonly sourceName?: string;
+  readonly audioAvailable: boolean;
+  readonly audioTrackCount: number;
+  readonly transcriptionAvailable: boolean;
+  readonly translationAvailable: boolean;
 }
 
 export interface RecordingMetadata {
@@ -82,6 +93,8 @@ export class RecordingManager {
   private readonly latestArchives = new Map<AudioSourceId, ArchivedSession>();
   private readonly reservedNames = new Set<string>();
   private readonly sessions = new Map<string, RecordingSession>();
+  private archiveBundles: ArchivedBundle[] = [];
+  private initializePromise: Promise<void> | undefined;
   readonly archiveRoot: string;
   readonly audioRoot: string;
   readonly transcriptionRoot: string;
@@ -121,18 +134,77 @@ export class RecordingManager {
   }
 
   async initialize(): Promise<void> {
-    await Promise.all([
-      mkdir(this.audioRoot, { recursive: true }),
-      mkdir(this.transcriptionRoot, { recursive: true }),
-      mkdir(this.translationRoot, { recursive: true }),
-      mkdir(this.workRoot, { recursive: true }),
-    ]);
-    const latest = await Promise.all(
-      (["system", "microphone"] as const).map((sourceId) => this.findLatestArchive(sourceId)),
-    );
-    latest.forEach((archive) => {
-      if (archive) this.latestArchives.set(archive.sourceId, archive);
-    });
+    this.initializePromise ??= this.initializeArchiveStorage();
+    await this.initializePromise;
+  }
+
+  archives(): readonly ArchivedBundle[] {
+    return this.archiveBundles;
+  }
+
+  async refreshArchives(): Promise<void> {
+    await this.initialize();
+    await this.refreshArchiveCatalog();
+  }
+
+  artifactPath(
+    archiveName: string,
+    kind: ArchiveExportKind,
+  ): { path: string; directory: boolean } | undefined {
+    const bundle = this.archiveBundles.find((item) => item.name === archiveName);
+    if (!bundle) return undefined;
+    if (kind === "audio") {
+      return bundle.audioAvailable ? { path: path.join(this.audioRoot, archiveName), directory: true } : undefined;
+    }
+    if (kind === "transcription") {
+      return bundle.transcriptionAvailable
+        ? { path: path.join(this.transcriptionRoot, `${archiveName}.md`), directory: false }
+        : undefined;
+    }
+    return bundle.translationAvailable
+      ? { path: path.join(this.translationRoot, `${archiveName}.md`), directory: false }
+      : undefined;
+  }
+
+  async renameArchive(currentName: string, requestedName: string): Promise<string> {
+    await this.initialize();
+    const current = this.archiveBundles.find((item) => item.name === currentName);
+    if (!current) throw new Error("Archive does not exist");
+    const nextName = normalizeArchiveName(requestedName);
+    if (nextName === currentName) return currentName;
+    if (this.archiveBundles.some((item) => item.name === nextName)) {
+      throw new Error(`Archive already exists: ${nextName}`);
+    }
+    const moves = ([
+      [current.audioAvailable, path.join(this.audioRoot, currentName), path.join(this.audioRoot, nextName)],
+      [current.transcriptionAvailable, path.join(this.transcriptionRoot, `${currentName}.md`), path.join(this.transcriptionRoot, `${nextName}.md`)],
+      [current.translationAvailable, path.join(this.translationRoot, `${currentName}.md`), path.join(this.translationRoot, `${nextName}.md`)],
+    ] as const).filter(([available]) => available);
+    const completed: Array<readonly [string, string]> = [];
+    try {
+      for (const [, from, to] of moves) {
+        await rename(from, to);
+        completed.push([from, to]);
+      }
+    } catch (error) {
+      for (const [from, to] of completed.reverse()) {
+        await rename(to, from).catch(() => undefined);
+      }
+      throw error;
+    }
+    for (const [sourceId, archive] of this.latestArchives) {
+      if (archive.name === currentName) {
+        this.latestArchives.set(sourceId, {
+          ...archive,
+          name: nextName,
+          audioDirectory: path.join(this.audioRoot, nextName),
+          transcriptionPath: path.join(this.transcriptionRoot, `${nextName}.md`),
+          translationPath: path.join(this.translationRoot, `${nextName}.md`),
+        });
+      }
+    }
+    await this.refreshArchiveCatalog();
+    return nextName;
   }
 
   async registerSource(sourceId: AudioSourceId): Promise<void> {
@@ -336,6 +408,7 @@ export class RecordingManager {
       translationPath,
     };
     this.latestArchives.set(sourceId, archive);
+    await this.refreshArchiveCatalog();
     return archive;
   }
 
@@ -391,13 +464,71 @@ export class RecordingManager {
     }
   }
 
+  private async initializeArchiveStorage(): Promise<void> {
+    await Promise.all([
+      mkdir(this.audioRoot, { recursive: true }),
+      mkdir(this.transcriptionRoot, { recursive: true }),
+      mkdir(this.translationRoot, { recursive: true }),
+      mkdir(this.workRoot, { recursive: true }),
+    ]);
+    await this.refreshArchiveCatalog();
+    const latest = await Promise.all(
+      (["system", "microphone"] as const).map((sourceId) => this.findLatestArchive(sourceId)),
+    );
+    latest.forEach((archive) => {
+      if (archive) this.latestArchives.set(archive.sourceId, archive);
+    });
+  }
+
+  private async refreshArchiveCatalog(): Promise<void> {
+    const [audioEntries, transcriptionEntries, translationEntries] = await Promise.all([
+      readArchiveEntries(this.audioRoot, "directory"),
+      readArchiveEntries(this.transcriptionRoot, "markdown"),
+      readArchiveEntries(this.translationRoot, "markdown"),
+    ]);
+    const names = new Set([...audioEntries, ...transcriptionEntries, ...translationEntries]);
+    const bundles = await Promise.all([...names].map(async (name): Promise<ArchivedBundle> => {
+      const audioAvailable = audioEntries.has(name);
+      const transcriptionAvailable = transcriptionEntries.has(name);
+      const translationAvailable = translationEntries.has(name);
+      const candidates = [
+        ...(audioAvailable ? [path.join(this.audioRoot, name)] : []),
+        ...(transcriptionAvailable ? [path.join(this.transcriptionRoot, `${name}.md`)] : []),
+        ...(translationAvailable ? [path.join(this.translationRoot, `${name}.md`)] : []),
+      ];
+      const details = await Promise.all(candidates.map((candidate) => stat(candidate)));
+      const metadataPath = translationAvailable
+        ? path.join(this.translationRoot, `${name}.md`)
+        : transcriptionAvailable ? path.join(this.transcriptionRoot, `${name}.md`) : undefined;
+      const metadata = metadataPath ? await readArchiveMetadata(metadataPath) : {};
+      const audioTrackCount = audioAvailable
+        ? (await readdir(path.join(this.audioRoot, name), { withFileTypes: true }))
+            .filter((entry) => entry.isFile() && entry.name.toLocaleLowerCase().endsWith(".wav")).length
+        : 0;
+      return {
+        name,
+        savedAt: new Date(Math.max(...details.map((item) => item.mtimeMs))).toISOString(),
+        ...metadata,
+        audioAvailable,
+        audioTrackCount,
+        transcriptionAvailable,
+        translationAvailable,
+      };
+    }));
+    this.archiveBundles = bundles.sort((left, right) => right.savedAt.localeCompare(left.savedAt));
+    const validNames = new Set(this.archiveBundles.map((item) => item.name));
+    for (const [sourceId, archive] of this.latestArchives) {
+      if (!validNames.has(archive.name)) this.latestArchives.delete(sourceId);
+    }
+  }
+
   private async findLatestArchive(sourceId: AudioSourceId): Promise<ArchivedSession | undefined> {
     const files = (await readdir(this.translationRoot, { withFileTypes: true }))
       .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".md"));
     const candidates = (await Promise.all(files.map(async (entry) => {
       const translationPath = path.join(this.translationRoot, entry.name);
-      const content = await readFile(translationPath, "utf8");
-      if (!content.includes(`- 声源：${sourceId}`)) {
+      const metadata = await readArchiveMetadata(translationPath);
+      if (metadata.sourceId !== sourceId) {
         return undefined;
       }
       const details = await stat(translationPath);
@@ -417,6 +548,44 @@ export class RecordingManager {
       translationPath: latest.translationPath,
     };
   }
+}
+
+async function readArchiveEntries(
+  directory: string,
+  kind: "directory" | "markdown",
+): Promise<Set<string>> {
+  try {
+    const entries = await readdir(directory, { withFileTypes: true });
+    return new Set(entries.flatMap((entry) => {
+      if (kind === "directory") return entry.isDirectory() ? [entry.name] : [];
+      return entry.isFile() && entry.name.toLocaleLowerCase().endsWith(".md")
+        ? [entry.name.slice(0, -3)]
+        : [];
+    }));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return new Set();
+    throw error;
+  }
+}
+
+async function readArchiveMetadata(
+  filePath: string,
+): Promise<{ sourceId?: AudioSourceId; sourceName?: string }> {
+  const file = await open(filePath, "r");
+  const buffer = Buffer.alloc(4096);
+  let bytesRead = 0;
+  try {
+    ({ bytesRead } = await file.read(buffer, 0, buffer.length, 0));
+  } finally {
+    await file.close();
+  }
+  const header = buffer.toString("utf8", 0, bytesRead);
+  const sourceId = header.match(/^- 声源：(.+)$/mu)?.[1]?.trim();
+  const sourceName = header.match(/^- 声源名称：(.+)$/mu)?.[1]?.trim();
+  return {
+    ...(sourceId ? { sourceId } : {}),
+    ...(sourceName ? { sourceName } : {}),
+  };
 }
 
 export function createDefaultArchiveName(date = new Date()): string {

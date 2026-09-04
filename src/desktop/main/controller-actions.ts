@@ -31,6 +31,7 @@ const ACTION_NAMES = new Set<DesktopActionName>([
   "set-terminology-review-model",
   "test-models",
   "set-archive-name",
+  "rename-archive",
   "refresh-pricing",
   "dismiss-notification",
   "add-source",
@@ -147,6 +148,11 @@ export async function dispatchControllerAction(
         readString(request.payload, "name"),
       );
       break;
+    case "rename-archive": {
+      const rename = readArchiveRename(request.payload);
+      await controller.renameArchive(rename.archiveName, rename.nextName);
+      break;
+    }
     case "refresh-pricing":
       await controller.refreshPricing();
       break;
@@ -239,6 +245,14 @@ function readNewSource(payload: unknown): TuiNewSourceInput {
         ...(process.executablePath ? { executablePath: process.executablePath } : {}),
       })),
     },
+  };
+}
+
+function readArchiveRename(payload: unknown): { archiveName: string; nextName: string } {
+  if (!isRecord(payload)) throw new TypeError("Action requires archive names");
+  return {
+    archiveName: readString(payload, "archiveName"),
+    nextName: readString(payload, "nextName"),
   };
 }
 

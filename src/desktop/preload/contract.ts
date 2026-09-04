@@ -30,6 +30,7 @@ export type DesktopActionName =
   | "set-terminology-review-model"
   | "test-models"
   | "set-archive-name"
+  | "rename-archive"
   | "refresh-pricing"
   | "dismiss-notification"
   | "add-source"
@@ -47,6 +48,7 @@ export type DesktopActionPayload =
   | { readonly reviewModel: TuiReviewModel }
   | { readonly name: string }
   | { readonly notificationId: string }
+  | { readonly archiveName: string; readonly nextName: string }
   | { readonly source: TuiNewSourceInput };
 
 export type DesktopExportKind = "audio" | "transcription" | "translation";
@@ -62,8 +64,17 @@ export interface DesktopActionRequest {
   readonly payload?: DesktopActionPayload;
 }
 
+export type DesktopArchiveOperation = "open-root" | "open" | "show-in-folder" | "delete";
+
+export interface DesktopArchiveRequest {
+  readonly operation: DesktopArchiveOperation;
+  readonly archiveName?: string;
+  readonly kind?: DesktopExportKind;
+}
+
 export type DesktopWindowCommand =
   | "open-overlay"
+  | "open-logs"
   | "expand-overlay"
   | "minimize"
   | "close";
@@ -74,6 +85,7 @@ export interface DesktopBridge {
   action(name: DesktopActionName, payload?: DesktopActionPayload): Promise<TuiSnapshot>;
   windowControl(command: DesktopWindowCommand): Promise<void>;
   exportArchive(sourceId: TuiSourceId, kind: DesktopExportKind): Promise<DesktopExportResult>;
+  manageArchive(request: DesktopArchiveRequest): Promise<TuiSnapshot>;
 
   /** Compatibility aliases for early renderer prototypes. */
   invoke(request: DesktopActionRequest): Promise<TuiSnapshot>;

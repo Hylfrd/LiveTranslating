@@ -46,7 +46,10 @@ npm run dev:desktop
 The desktop app starts with separate computer and microphone pages. Additional
 computer, multi-microphone, or LAN sources can be named and assigned an icon;
 every source receives its own transcript, transport, archive state, and export history.
-A settings page and compact subtitle window remain shared surfaces. Browser-only visual previews are
+Completed sessions are grouped in a recordings manager where audio, source Markdown,
+and bilingual Markdown can be filtered, opened, revealed, renamed together, or moved
+to the Windows recycle bin. Runtime logs open in a dedicated filterable window. A
+settings page and compact subtitle window remain shared surfaces. Browser-only visual previews are
 available from the Vite server with `?surface=main&preview=1` or
 `?surface=compact&preview=1`; preview data is never enabled in Electron.
 
@@ -82,9 +85,14 @@ well-supported terminology errors and never persists inferred rules.
 - Source-only Markdown: `archives/transcription/<session name>.md`
 - Bilingual Markdown: `archives/translation/<session name>.md`
 - Every configured source owns an independent session, name, panel, and set of files.
+- The recordings manager treats the three paths with the same session name as one bundle.
+- Deletion uses the Windows recycle bin; bundle renaming updates all available artifacts together.
 - Same-minute name collisions are reserved atomically and receive `_2`, `_3`, and later suffixes.
 - Fifteen-minute WAV segmentation limits damage from interrupted sessions
 - Structured application logs: `logs/YYYY-MM-DD.jsonl`
+
+The compact subtitle window keeps up to 160 recent entries in a scrollable newest-first
+list. The latest entry stays at the top and receives the strongest translation size.
 
 ## LAN sources
 

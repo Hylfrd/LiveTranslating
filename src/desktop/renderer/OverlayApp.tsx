@@ -56,10 +56,9 @@ export function OverlayApp() {
     };
   }, []);
 
-  const entries = snapshot?.subtitles
-    .filter((entry) => entry.sourceId === sourceId)
-    .slice(-3) ?? [];
-  const latestEntry = entries.at(-1);
+  const sourceEntries = snapshot?.subtitles.filter((entry) => entry.sourceId === sourceId) ?? [];
+  const latestEntry = sourceEntries.at(-1);
+  const entries = sourceEntries.slice(-160).reverse();
   const latestTranslation = latestEntry
     ? (latestEntry.revisedTranslation ?? latestEntry.translation)
     : "";
@@ -67,7 +66,7 @@ export function OverlayApp() {
   useEffect(() => {
     const element = subtitleScrollRef.current;
     if (element) {
-      element.scrollTop = element.scrollHeight;
+      element.scrollTop = 0;
     }
   }, [entries.length, latestTranslation]);
 
@@ -116,7 +115,7 @@ export function OverlayApp() {
               <strong>{loading ? "正在连接" : snapshot?.running ? "等待下一句话" : "等待开始同传"}</strong>
             </div>
           ) : entries.map((entry, index) => (
-            <SubtitleLine key={entry.id} entry={entry} latest={index === entries.length - 1} />
+            <SubtitleLine key={entry.id} entry={entry} latest={index === 0} />
           ))}
         </div>
         <span className="sr-only" aria-live="polite" aria-atomic="true">{latestTranslation}</span>

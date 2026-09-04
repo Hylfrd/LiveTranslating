@@ -1,23 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
   AlertCircle,
+  ArrowUpRight,
+  Check,
   CheckCircle2,
-  ChevronRight,
   Download,
-  ExternalLink,
   FileAudio,
   FileText,
   FolderArchive,
+  FolderOpen,
   Globe2,
   Headphones,
+  Languages,
   Layers3,
   LoaderCircle,
   Mic,
-  MonitorSpeaker,
   PanelRightClose,
   PanelRightOpen,
   Pause,
+  Pencil,
+  PictureInPicture2,
   Play,
   Plus,
   Radio,
@@ -28,13 +31,17 @@ import {
   ShieldCheck,
   Sparkles,
   Square,
+  Trash2,
   Video,
+  Volume2,
   X,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 import appIconUrl from "../../../assets/icon.png?url";
 import type {
   TuiLanguage,
+  TuiArchivedBundle,
   TuiModelHealth,
   TuiNotification,
   TuiSessionPhase,
@@ -47,12 +54,12 @@ import type {
   TuiNewSourceInput,
 } from "../../tui/controller.js";
 import type { AudioSourceIcon, AudioSourceKind } from "../../audio/types.js";
-import type { DesktopActionName, DesktopActionPayload, DesktopExportKind } from "./types.js";
+import type { ArchiveOperationRequest, DesktopActionName, DesktopActionPayload, DesktopExportKind } from "./types.js";
 import { readSourcePreference, writeSourcePreference } from "./source-preference.js";
 import { IconButton, Toggle } from "./ui.js";
 import { useDesktopBridge } from "./use-desktop-bridge.js";
 
-type AppPage = TuiSourceId | "settings";
+type AppPage = TuiSourceId | "archives" | "settings";
 
 interface ParagraphTaggedEntry extends TuiSubtitleEntry {
   readonly paragraphId?: string;
@@ -81,13 +88,25 @@ const SESSION_LABELS: Record<TuiSessionPhase, string> = {
 };
 
 const SOURCE_ICONS = {
-  monitor: MonitorSpeaker,
+  monitor: Volume2,
   microphone: Mic,
   headphones: Headphones,
   radio: RadioTower,
   globe: Globe2,
   video: Video,
 } as const;
+
+const ARCHIVE_ASSET_TYPES: ReadonlyArray<{
+  readonly kind: DesktopExportKind;
+  readonly label: string;
+  readonly detail: (archive: TuiArchivedBundle) => string;
+  readonly icon: LucideIcon;
+  readonly available: (archive: TuiArchivedBundle) => boolean;
+}> = [
+  { kind: "audio", label: "音频记录", detail: (archive) => `${archive.audioTrackCount} 个 WAV 分段`, icon: FileAudio, available: (archive) => archive.audioAvailable },
+  { kind: "transcription", label: "原文稿", detail: () => "Markdown", icon: FileText, available: (archive) => archive.transcriptionAvailable },
+  { kind: "translation", label: "双语译稿", detail: () => "Markdown · 原文与译文", icon: Languages, available: (archive) => archive.translationAvailable },
+];
 
 const MODEL_LABELS = {
   "hy-mt2-plus": "Hunyuan MT2 Plus",
@@ -239,13 +258,11 @@ function Sidebar({
   page,
   snapshot,
   onNavigate,
-  onOpenOverlay,
   onAddSource,
 }: {
   readonly page: AppPage;
   readonly snapshot: TuiSnapshot;
   readonly onNavigate: (page: AppPage) => void;
-  readonly onOpenOverlay: () => void;
   readonly onAddSource: () => void;
 }) {
   return (
@@ -286,9 +303,16 @@ function Sidebar({
         </button>
       </div>
       <div className="sidebar__actions">
-        <button className="overlay-command" type="button" aria-label="字幕小窗" title="字幕小窗" onClick={onOpenOverlay}>
-          <ExternalLink aria-hidden="true" />
-          <span>字幕小窗</span>
+        <button
+          className={`archive-manager-command${page === "archives" ? " is-active" : ""}`}
+          type="button"
+          aria-current={page === "archives" ? "page" : undefined}
+          aria-label="录音管理"
+          title="录音管理"
+          onClick={() => onNavigate("archives")}
+        >
+          <FolderArchive aria-hidden="true" />
+          <span>录音管理</span>
         </button>
         <button
           className={`settings-command${page === "settings" ? " is-active" : ""}`}
@@ -349,6 +373,7 @@ function SourceHeader({
   onPause,
   onResume,
   onStop,
+  onOpenOverlay,
 }: {
   readonly source: TuiSourceState;
   readonly sessionPhase: TuiSessionPhase;
@@ -357,27 +382,32 @@ function SourceHeader({
   readonly onPause: () => void;
   readonly onResume: () => void;
   readonly onStop: () => void;
+  readonly onOpenOverlay: () => void;
 }) {
   const Icon = SOURCE_ICONS[source.icon];
   return (
     <header className="source-header">
       <div className="source-header__identity">
         <span className={`source-header__icon source-header__icon--${source.phase}`}><Icon aria-hidden="true" /></span>
-        <div>
-          <h1 title={source.label}>{source.label}</h1>
-          <span className={`phase phase--${source.phase}`}>{SESSION_LABELS[sessionPhase]}</span>
-          <span className="source-header__compact-selection" title={source.selectionLabel}>声音来源：{source.selectionLabel}</span>
+        <div className="source-header__copy">
+          <div className="source-header__title-line">
+            <h1 title={source.label}>{source.label}</h1>
+            <span className={`phase phase--${source.phase}`}>{SESSION_LABELS[sessionPhase]}</span>
+          </div>
+          <div className="source-header__selection" title={source.selectionLabel}>
+            <span>声音来源</span>
+            <strong>{source.selectionLabel}</strong>
+          </div>
         </div>
-      </div>
-      <div className="source-header__selection">
-        <span>声音来源</span>
-        <strong title={source.selectionLabel}>{source.selectionLabel}</strong>
       </div>
       <dl className="source-header__stats">
         <div><dt>延迟</dt><dd>{source.latencyMs === undefined ? "--" : `${Math.round(source.latencyMs)} ms`}</dd></div>
         <div><dt>丢帧</dt><dd className={source.droppedFrames ? "is-warning" : undefined}>{source.droppedFrames ?? 0}</dd></div>
       </dl>
-      <TransportControls phase={sessionPhase} pending={pending} onStart={onStart} onPause={onPause} onResume={onResume} onStop={onStop} />
+      <div className="source-header__actions">
+        <IconButton className="subtitle-window-button" icon={PictureInPicture2} label="打开字幕小窗" onClick={onOpenOverlay} />
+        <TransportControls phase={sessionPhase} pending={pending} onStart={onStart} onPause={onPause} onResume={onResume} onStop={onStop} />
+      </div>
     </header>
   );
 }
@@ -403,10 +433,10 @@ function TranscriptReader({
   const paragraphs = useMemo<TranscriptParagraph[]>(() => backendParagraphs
     ? backendParagraphs.map((paragraph) => ({ id: paragraph.id, entries: paragraph.sentences }))
     : groupIntoParagraphs(sourceEntries), [backendParagraphs, sourceEntries]);
+  const latest = sourceEntries.at(-1);
   useEffect(() => {
     if (stickToBottom.current && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [sourceEntries.length]);
-  const latest = sourceEntries.at(-1);
+  }, [sourceEntries.length, latest?.sourceText, latest?.translation, latest?.revisedTranslation]);
   const latestAnnounced = latest?.translationOmitted ? "" : (latest?.revisedTranslation ?? latest?.translation ?? "");
   return (
     <div className="transcript-reader" ref={scrollRef} onScroll={() => {
@@ -450,6 +480,7 @@ function ArchivePanel({
   onToggle,
   onRename,
   onExport,
+  onManageArchive,
 }: {
   readonly sourceId: TuiSourceId;
   readonly snapshot: TuiSnapshot;
@@ -458,6 +489,7 @@ function ArchivePanel({
   readonly onToggle: () => void;
   readonly onRename: (name: string) => void;
   readonly onExport: (kind: DesktopExportKind) => void;
+  readonly onManageArchive: (request: ArchiveOperationRequest) => void;
 }) {
   const session = snapshot.sessions[sourceId];
   const source = snapshot.sources[sourceId];
@@ -496,25 +528,15 @@ function ArchivePanel({
             onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
           />
         </label>
-        <div className={`archive-status archive-status--${session.phase}`}>
-          <span aria-hidden="true" />
-          <div><strong>{SESSION_LABELS[session.phase]}</strong><p>{session.phase === "idle" ? "播放会创建一套全新的文件" : "音频、文字稿与翻译稿同步记录"}</p></div>
-        </div>
-        <div className="archive-files">
-          <div><FileAudio aria-hidden="true" /><span>WAV 分轨录音</span><CheckCircle2 aria-hidden="true" /></div>
-          <div><FileText aria-hidden="true" /><span>纯文字稿 · MD</span><CheckCircle2 aria-hidden="true" /></div>
-          <div><FileText aria-hidden="true" /><span>双语翻译稿 · MD</span><CheckCircle2 aria-hidden="true" /></div>
-        </div>
-        <div className="archive-last">
-          <span>最近保存</span>
-          <strong title={lastSaved?.name}>{lastSaved?.name ?? "暂无归档"}</strong>
-          {lastSaved ? <time>{new Date(lastSaved.savedAt).toLocaleString("zh-CN", { hour12: false })}</time> : null}
-        </div>
+        <button className="archive-root-command" type="button" onClick={() => onManageArchive({ operation: "open-root" })}>
+          <FolderOpen aria-hidden="true" />
+          <span>打开归档文件夹</span>
+        </button>
       </div>
       <div className="archive-exports">
-        <button type="button" disabled={!lastSaved || pending} onClick={() => onExport("audio")}><Download aria-hidden="true" /><span>导出录音</span></button>
-        <button type="button" disabled={!lastSaved || pending} onClick={() => onExport("transcription")}><Download aria-hidden="true" /><span>导出纯文字稿</span></button>
-        <button type="button" disabled={!lastSaved || pending} onClick={() => onExport("translation")}><Download aria-hidden="true" /><span>导出双语翻译稿</span></button>
+        <button type="button" title={lastSaved ? "导出最近完成的录音" : "尚无已完成录制"} disabled={!lastSaved || pending} onClick={() => onExport("audio")}><Download aria-hidden="true" /><span>导出录音</span></button>
+        <button type="button" title={lastSaved ? "导出最近完成的原文稿" : "尚无已完成录制"} disabled={!lastSaved || pending} onClick={() => onExport("transcription")}><Download aria-hidden="true" /><span>导出原文稿</span></button>
+        <button type="button" title={lastSaved ? "导出最近完成的双语译稿" : "尚无已完成录制"} disabled={!lastSaved || pending} onClick={() => onExport("translation")}><Download aria-hidden="true" /><span>导出双语译稿</span></button>
       </div>
     </aside>
   );
@@ -528,6 +550,8 @@ function SourceView({
   onTogglePanel,
   onAction,
   onExport,
+  onOpenOverlay,
+  onManageArchive,
 }: {
   readonly sourceId: TuiSourceId;
   readonly snapshot: TuiSnapshot;
@@ -536,6 +560,8 @@ function SourceView({
   readonly onTogglePanel: () => void;
   readonly onAction: (name: DesktopActionName, payload?: DesktopActionPayload) => void;
   readonly onExport: (kind: DesktopExportKind) => void;
+  readonly onOpenOverlay: () => void;
+  readonly onManageArchive: (request: ArchiveOperationRequest) => void;
 }) {
   const source = snapshot.sources[sourceId];
   const session = snapshot.sessions[sourceId];
@@ -551,6 +577,7 @@ function SourceView({
         onPause={() => onAction("pause-session", { sourceId })}
         onResume={() => onAction("resume-session", { sourceId })}
         onStop={() => onAction("stop-session", { sourceId })}
+        onOpenOverlay={onOpenOverlay}
       />
       <div className={`source-workspace${panelCollapsed ? " is-panel-collapsed" : ""}`}>
         <div className="source-content">
@@ -581,6 +608,7 @@ function SourceView({
           onToggle={onTogglePanel}
           onRename={(name) => onAction("set-archive-name", { sourceId, name })}
           onExport={onExport}
+          onManageArchive={onManageArchive}
         />
       </div>
     </section>
@@ -595,22 +623,182 @@ function formatCost(value: number, currency: "CNY" | "USD"): string {
   return new Intl.NumberFormat("zh-CN", { style: "currency", currency, minimumFractionDigits: 4, maximumFractionDigits: 6 }).format(value);
 }
 
-function SettingsView({
+function WorkspaceHeader({
+  icon: Icon,
+  title,
+  detail,
+  onOpenOverlay,
+  action,
+}: {
+  readonly icon: LucideIcon;
+  readonly title: string;
+  readonly detail: string;
+  readonly onOpenOverlay: () => void;
+  readonly action?: ReactNode;
+}) {
+  return (
+    <header className="workspace-header">
+      <div className="workspace-header__identity">
+        <Icon aria-hidden="true" />
+        <div><h1>{title}</h1><span>{detail}</span></div>
+      </div>
+      <div className="workspace-header__actions">
+        {action}
+        <IconButton icon={PictureInPicture2} label="打开字幕小窗" onClick={onOpenOverlay} />
+      </div>
+    </header>
+  );
+}
+
+function ArchiveManagerView({
   snapshot,
   pending,
   onAction,
+  onManageArchive,
+  onOpenOverlay,
 }: {
   readonly snapshot: TuiSnapshot;
   readonly pending: boolean;
   readonly onAction: (name: DesktopActionName, payload?: DesktopActionPayload) => void;
+  readonly onManageArchive: (request: ArchiveOperationRequest) => void;
+  readonly onOpenOverlay: () => void;
+}) {
+  const [visibleKinds, setVisibleKinds] = useState<Record<DesktopExportKind, boolean>>({
+    audio: true,
+    transcription: true,
+    translation: true,
+  });
+  const [editingName, setEditingName] = useState<string>();
+  const [draftName, setDraftName] = useState("");
+  const shownTypes = ARCHIVE_ASSET_TYPES.filter((item) => visibleKinds[item.kind]);
+  const beginRename = (archive: TuiArchivedBundle) => {
+    setEditingName(archive.name);
+    setDraftName(archive.name);
+  };
+  const commitRename = () => {
+    const nextName = draftName.trim();
+    if (editingName && nextName && nextName !== editingName) {
+      onAction("rename-archive", { archiveName: editingName, nextName });
+    }
+    setEditingName(undefined);
+  };
+
+  return (
+    <section className="archive-manager-view">
+      <WorkspaceHeader
+        icon={FolderArchive}
+        title="录音管理"
+        detail={`${snapshot.archives.length} 组归档`}
+        onOpenOverlay={onOpenOverlay}
+        action={(
+          <button className="compact-command" type="button" onClick={() => onManageArchive({ operation: "open-root" })}>
+            <FolderOpen aria-hidden="true" />打开归档文件夹
+          </button>
+        )}
+      />
+      <div className="archive-manager-body">
+        <div className="archive-filter-bar" aria-label="显示文件类型">
+          <strong>显示内容</strong>
+          <div>
+            {ARCHIVE_ASSET_TYPES.map(({ kind, label, icon: Icon }) => (
+              <label className={`archive-filter archive-filter--${kind}`} key={kind}>
+                <input
+                  type="checkbox"
+                  checked={visibleKinds[kind]}
+                  onChange={() => setVisibleKinds((current) => ({ ...current, [kind]: !current[kind] }))}
+                />
+                <Icon aria-hidden="true" />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div className="archive-bundle-list">
+          {snapshot.archives.length === 0 ? (
+            <div className="archive-manager-empty"><FolderArchive aria-hidden="true" /><strong>还没有归档</strong><span>完成一次录制后，三类文件会作为一组出现在这里。</span></div>
+          ) : snapshot.archives.map((archive) => (
+            <article className="archive-bundle" key={archive.name}>
+              <header className="archive-bundle__header">
+                <div className="archive-bundle__name">
+                  {editingName === archive.name ? (
+                    <div className="archive-rename-field">
+                      <input
+                        value={draftName}
+                        maxLength={96}
+                        aria-label="新的归档名称"
+                        autoFocus
+                        onChange={(event) => setDraftName(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") commitRename();
+                          if (event.key === "Escape") setEditingName(undefined);
+                        }}
+                      />
+                      <IconButton icon={Check} label="确认重命名" disabled={!draftName.trim() || pending} onClick={commitRename} />
+                      <IconButton icon={X} label="取消重命名" onClick={() => setEditingName(undefined)} />
+                    </div>
+                  ) : <h2 title={archive.name}>{archive.name}</h2>}
+                  <p><time>{new Date(archive.savedAt).toLocaleString("zh-CN", { hour12: false })}</time><span>{archive.sourceName ?? archive.sourceId ?? "未知来源"}</span></p>
+                </div>
+                {editingName === archive.name ? null : (
+                  <div className="archive-bundle__actions">
+                    <IconButton icon={FolderOpen} label={`在文件夹中显示 ${archive.name}`} onClick={() => onManageArchive({ operation: "show-in-folder", archiveName: archive.name })} />
+                    <IconButton icon={Pencil} label={`重命名 ${archive.name}`} disabled={pending} onClick={() => beginRename(archive)} />
+                    <IconButton className="danger-icon-button" icon={Trash2} label={`删除 ${archive.name}`} disabled={pending} onClick={() => onManageArchive({ operation: "delete", archiveName: archive.name })} />
+                  </div>
+                )}
+              </header>
+              <div className="archive-assets">
+                {shownTypes.length === 0 ? <p className="archive-assets-empty">至少勾选一种文件类型。</p> : shownTypes.map((asset) => {
+                  const available = asset.available(archive);
+                  const Icon = asset.icon;
+                  return (
+                    <button
+                      className={`archive-asset archive-asset--${asset.kind}`}
+                      type="button"
+                      key={asset.kind}
+                      disabled={!available}
+                      title={available ? `打开${asset.label}` : `${asset.label}缺失`}
+                      onClick={() => onManageArchive({ operation: "open", archiveName: archive.name, kind: asset.kind })}
+                    >
+                      <span className="archive-asset__icon"><Icon aria-hidden="true" /></span>
+                      <span><strong>{asset.label}</strong><small>{available ? asset.detail(archive) : "文件缺失"}</small></span>
+                      <span className="archive-asset__open">打开<ArrowUpRight aria-hidden="true" /></span>
+                    </button>
+                  );
+                })}
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SettingsView({
+  snapshot,
+  pending,
+  onAction,
+  onOpenOverlay,
+  onOpenLogs,
+}: {
+  readonly snapshot: TuiSnapshot;
+  readonly pending: boolean;
+  readonly onAction: (name: DesktopActionName, payload?: DesktopActionPayload) => void;
+  readonly onOpenOverlay: () => void;
+  readonly onOpenLogs: () => void;
 }) {
   const unhealthy = Object.values(snapshot.sources).some((source) => source.phase === "error" || Boolean(source.droppedFrames));
   const modelTesting = snapshot.modelHealth.some((item) => item.status === "testing");
+  const warningLogs = snapshot.logs.filter((entry) => entry.level === "warn").length;
+  const errorLogs = snapshot.logs.filter((entry) => entry.level === "error").length;
   return (
     <section className="settings-view">
+      <WorkspaceHeader icon={Settings} title="设置" detail="翻译、复核与运行状态" onOpenOverlay={onOpenOverlay} />
       <div className="settings-sheet">
         <section className="settings-section">
-          <h1>翻译</h1>
+          <h2>翻译</h2>
           <div className="translation-fields translation-fields--target-only">
             <SelectField
               label="翻译成"
@@ -694,9 +882,9 @@ function SettingsView({
         </section>
 
         <section className="settings-section log-section">
-          <div className="settings-heading"><h2>运行日志</h2></div>
-          <div className="log-list" tabIndex={0}>
-            {snapshot.logs.length === 0 ? <p className="settings-empty">暂无日志</p> : snapshot.logs.slice(-80).reverse().map((entry) => <div className={`log-row log-row--${entry.level}`} key={entry.id}><time>{entry.timestamp}</time><span>{entry.source ?? entry.level.toUpperCase()}</span><p>{entry.message}</p></div>)}
+          <div className="log-launch-row">
+            <div><h2>运行日志</h2><p>{snapshot.logs.length} 条记录 · {warningLogs} 个警告 · {errorLogs} 个错误</p></div>
+            <button className="compact-command" type="button" onClick={onOpenLogs}><Activity aria-hidden="true" />打开日志窗口</button>
           </div>
         </section>
       </div>
@@ -814,7 +1002,7 @@ function AddSourceModal({
 
         <div className="source-kind-tabs" role="tablist" aria-label="来源类型">
           {([[
-            "system", "电脑", MonitorSpeaker,
+            "system", "电脑", Volume2,
           ], [
             "microphone", "麦克风", Mic,
           ], [
@@ -871,7 +1059,7 @@ function LoadingShell() {
 }
 
 export function App() {
-  const { snapshot, loading, pendingAction, error, connected, invoke, exportArchive, controlWindow, clearError, reconnect } = useDesktopBridge();
+  const { snapshot, loading, pendingAction, error, connected, invoke, exportArchive, manageArchive, controlWindow, clearError, reconnect } = useDesktopBridge();
   const [page, setPage] = useState<AppPage>(() => readSourcePreference());
   const [panelCollapsed, setPanelCollapsed] = useState(() => window.localStorage.getItem("live-translating:archive-panel") === "collapsed");
   const [dismissedSourceError, setDismissedSourceError] = useState<string>();
@@ -880,7 +1068,7 @@ export function App() {
   const pending = Boolean(pendingAction || snapshot?.transitioning);
   const navigate = (nextPage: AppPage) => {
     setPage(nextPage);
-    if (nextPage !== "settings") writeSourcePreference(nextPage);
+    if (nextPage !== "settings" && nextPage !== "archives") writeSourcePreference(nextPage);
   };
   const togglePanel = () => setPanelCollapsed((value) => {
     const next = !value;
@@ -911,7 +1099,7 @@ export function App() {
   }, [controlWindow]);
 
   useEffect(() => {
-    if (snapshot && page !== "settings" && !snapshot.sources[page]) {
+    if (snapshot && page !== "settings" && page !== "archives" && !snapshot.sources[page]) {
       const fallback = snapshot.sourceOrder[0];
       if (fallback) navigate(fallback);
     }
@@ -920,17 +1108,32 @@ export function App() {
   if (loading && !snapshot) return <LoadingShell />;
   if (!snapshot) return <main className="fatal-state"><img src={appIconUrl} alt="" /><h1>LiveTranslating 暂时无法连接</h1><p>{error ?? "没有收到后端状态。"}</p><button className="text-button" type="button" onClick={reconnect}>重新连接</button></main>;
 
-  const activeSource = page === "settings" ? undefined : snapshot.sources[page];
+  const activeSource = page === "settings" || page === "archives" ? undefined : snapshot.sources[page];
   const sourceErrorKey = activeSource?.error ? `${activeSource.id}:${activeSource.error}` : undefined;
   const sourceError = activeSource?.error && sourceErrorKey !== dismissedSourceError ? activeSource.error : undefined;
   return (
     <main className="desktop-app">
-      <Sidebar page={page} snapshot={snapshot} onNavigate={navigate} onOpenOverlay={() => void controlWindow("open-overlay")} onAddSource={openSourceModal} />
+      <Sidebar page={page} snapshot={snapshot} onNavigate={navigate} onAddSource={openSourceModal} />
       <div className="content-surface">
         {page === "settings" ? (
-          <SettingsView snapshot={snapshot} pending={pending} onAction={(name, payload) => void invoke(name, payload)} />
+          <SettingsView
+            snapshot={snapshot}
+            pending={pending}
+            onAction={(name, payload) => void invoke(name, payload)}
+            onOpenOverlay={() => void controlWindow("open-overlay")}
+            onOpenLogs={() => void controlWindow("open-logs")}
+          />
+        ) : page === "archives" ? (
+          <ArchiveManagerView
+            snapshot={snapshot}
+            pending={pending}
+            onAction={(name, payload) => void invoke(name, payload)}
+            onManageArchive={(request) => void manageArchive(request)}
+            onOpenOverlay={() => void controlWindow("open-overlay")}
+          />
         ) : activeSource ? (
           <SourceView
+            key={page}
             sourceId={page}
             snapshot={snapshot}
             pending={pending || !connected}
@@ -938,6 +1141,8 @@ export function App() {
             onTogglePanel={togglePanel}
             onAction={(name, payload) => void invoke(name, payload)}
             onExport={(kind) => void exportArchive(page, kind)}
+            onOpenOverlay={() => void controlWindow("open-overlay")}
+            onManageArchive={(request) => void manageArchive(request)}
           />
         ) : null}
       </div>

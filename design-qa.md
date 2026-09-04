@@ -41,6 +41,10 @@ The settings view retains the incumbent unframed ruled sheet while removing sour
 - Dynamic source creation, navigation, modal focus containment, and narrow icon-rail labels passed.
 - Medium and narrow headers retained right-aligned transport controls without wrapping or overlapping the archive rail.
 - Remote access state has distinct private-HTTPS and insecure-fallback treatments; the fallback copy does not claim browser microphone support.
+- Simplified save rail contains only session naming, archive-folder access, and three exports.
+- Recordings manager passed default-on type filters, color-distinct assets, inline rename state, and newest-first bundle order.
+- Dedicated log surface passed level/source/search/follow structure with newest-first rows.
+- Compact subtitles passed newest-first DOM order, latest-first emphasis, top reset, and full content scrolling.
 
 ## Findings
 
@@ -54,7 +58,6 @@ The dark Codex panel was used only as an information-architecture reference. Kee
 
 ## Follow-up Polish
 
-- P3: compact subtitle-window redesign remains intentionally deferred by the user.
-- Browser microphone APIs require trusted HTTPS on non-loopback LAN origins; the remote page is reverse-proxy compatible and reports the recovery requirement when opened over insecure HTTP.
+- Browser microphone APIs require trusted HTTPS on non-loopback LAN origins; the remote page reports the recovery requirement when private HTTPS is unavailable.
 
 final result: passed
