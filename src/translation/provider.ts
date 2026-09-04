@@ -88,14 +88,9 @@ function createTranslationMessages(
     messages.push({ role: "assistant", content: turn.translation });
   }
 
-  const glossary = request.glossary
-    .map((term) => `${term.source} => ${term.target}`)
-    .join("\n");
   messages.push({
     role: "user",
-    content: glossary
-      ? `ASR-aware glossary (speech recognition may contain phonetic misspellings; apply only relevant mappings):\n${glossary}\n\nSource text:\n${request.text}`
-      : request.text,
+    content: request.text,
   });
   return messages;
 }
@@ -106,10 +101,6 @@ function createReviewMessages(
   const context = request.context
     .map((turn) => `Source: ${turn.source}\nTranslation: ${turn.translation}`)
     .join("\n\n");
-  const glossary = request.glossary
-    .map((term) => `${term.source} => ${term.target}`)
-    .join("\n");
-
   return [
     {
       role: "system",
@@ -119,7 +110,6 @@ function createReviewMessages(
       role: "user",
       content: [
         context ? `Recent context:\n${context}` : "Recent context: (none)",
-        glossary ? `Required glossary:\n${glossary}` : "Required glossary: (none)",
         `Source text:\n${request.sourceText}`,
         `Candidate translation:\n${request.originalTranslation}`,
       ].join("\n\n"),
@@ -604,7 +594,6 @@ export class OpenAICompatibleTranslationProvider {
       sourceLanguage: request.sourceLanguage,
       targetLanguage: request.targetLanguage,
       context: request.context,
-      glossary: request.glossary,
     };
     assertValid(validationRequest, result.text);
 

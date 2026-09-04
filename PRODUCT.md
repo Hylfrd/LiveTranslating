@@ -4,7 +4,7 @@
 
 ## Platform
 
-web
+Windows desktop
 
 ## Stack
 
@@ -30,8 +30,8 @@ interrupting the source application.
 
 One local pipeline presents the same independently processed system and
 microphone sources through a full control workspace, a compact subtitle window,
-and a terminal interface, while keeping recording, glossary, logs, and delayed
-revision state consistent across all surfaces.
+and a terminal interface, while keeping recording, logs, short-lived source
+context, and delayed revision state consistent across all surfaces.
 
 ## Operating Context
 
@@ -46,8 +46,9 @@ revision state consistent across all surfaces.
 - Preserve the existing Node.js backend and Ink TUI.
 - Add a large white desktop control window and a compact translucent-gray subtitle window.
 - Keep system audio and microphone independently selectable and concurrently usable.
-- Expose microphone device, recording, languages, translation model, delayed review,
-  glossary reload, source health, recent subtitles, and structured logs.
+- Expose microphone device, recording, languages, translation model, delayed
+  contextual terminology review, source health, continuous subtitle paragraphs, and structured logs.
+- Do not maintain a runtime glossary or persist terminology inferred by a model.
 - The compact window has only an expand control at top left and custom minimize and
   close controls at top right.
 - Closing the compact window keeps translation running in the background and leaves

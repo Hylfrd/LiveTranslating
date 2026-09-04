@@ -6,7 +6,6 @@ import { AsrModelManager } from "../asr/model-manager.js";
 import { TranscriptAssembler, cleanAsrText } from "../asr/transcript-assembler.js";
 import type { AudioSourceId } from "../audio/types.js";
 import { config } from "../config.js";
-import { GlossaryStore } from "../glossary/glossary-store.js";
 import { AppLogger } from "../logging/app-logger.js";
 import { RecordingManager } from "../recording/recording-manager.js";
 import { NativeAudioManager, type AudioManagerEvent } from "../sources/native-audio-manager.js";
@@ -18,6 +17,7 @@ import type {
   TuiSourcePhase,
   TuiSourceState,
   TuiSubtitleEntry,
+  TuiSubtitleParagraph,
   TuiTranslationModel,
 } from "../tui/controller.js";
 import { OpenAICompatibleTranslationProvider } from "../translation/provider.js";
@@ -74,7 +74,6 @@ interface TranslationJobSettings {
   readonly sourceLanguage: string;
   readonly targetLanguage: string;
   readonly model: TuiTranslationModel;
-  readonly glossary: Array<{ source: string; target: string }>;
   readonly recordingSessionId?: string;
 }
 
@@ -82,7 +81,6 @@ export class ApplicationController implements TuiController {
   private readonly events = new EventEmitter();
   private readonly logger: AppLogger;
   private readonly recording: RecordingManager;
-  private readonly glossary: GlossaryStore;
   private readonly audio: NativeAudioManager;
   private readonly asrModels: AsrModelManager;
   private readonly translator = new OpenAICompatibleTranslationProvider(config.translation);
@@ -141,7 +139,6 @@ export class ApplicationController implements TuiController {
   constructor(rootDirectory = process.cwd()) {
     this.logger = new AppLogger(rootDirectory);
     this.recording = new RecordingManager(rootDirectory);
-    this.glossary = new GlossaryStore(rootDirectory);
     this.audio = new NativeAudioManager(this.logger, this.recording);
     this.asrModels = new AsrModelManager(this.logger, rootDirectory);
     this.audio.subscribe((event) => this.handleAudioEvent(event));
@@ -149,8 +146,6 @@ export class ApplicationController implements TuiController {
   }
 
   async initialize(): Promise<void> {
-    const count = await this.glossary.load();
-    this.logger.info(`Loaded ${count} glossary terms from ${this.glossary.filePath}`, "glossary");
     const devices = this.audio.listMicrophones();
     const defaultId = this.audio.defaultMicrophoneId();
     this.sources.microphone.deviceId = defaultId ?? devices[0]?.id;
@@ -178,11 +173,11 @@ export class ApplicationController implements TuiController {
       recording: this.recording.active,
       reviewerEnabled: this.reviewerEnabled,
       reviewQueueSize: this.reviewQueueSize,
-      glossaryCount: this.glossary.count,
-      ...(this.glossary.lastUpdatedAt
-        ? { glossaryUpdatedAt: this.glossary.lastUpdatedAt.toISOString() }
-        : {}),
       subtitles: this.subtitles,
+      paragraphs: {
+        system: groupSubtitleParagraphs(this.subtitles, "system"),
+        microphone: groupSubtitleParagraphs(this.subtitles, "microphone"),
+      },
       logs: this.logger.recent(100).map((entry) => ({
         ...entry,
         timestamp: entry.timestamp.slice(11, 19),
@@ -236,6 +231,12 @@ export class ApplicationController implements TuiController {
     });
   }
 
+  async setRunning(enabled: boolean): Promise<void> {
+    if (this.running !== enabled) {
+      await this.toggleRunning();
+    }
+  }
+
   async toggleSource(sourceId: AudioSourceId): Promise<void> {
     return this.withLifecycle(async () => {
       const state = this.sources[sourceId];
@@ -250,6 +251,12 @@ export class ApplicationController implements TuiController {
       }
       this.emit();
     });
+  }
+
+  async setSourceEnabled(sourceId: AudioSourceId, enabled: boolean): Promise<void> {
+    if (this.sources[sourceId].enabled !== enabled) {
+      await this.toggleSource(sourceId);
+    }
   }
 
   async cycleMicrophoneDevice(direction: 1 | -1 = 1): Promise<void> {
@@ -328,6 +335,12 @@ export class ApplicationController implements TuiController {
     });
   }
 
+  async setRecording(enabled: boolean): Promise<void> {
+    if (this.recording.active !== enabled) {
+      await this.toggleRecording();
+    }
+  }
+
   toggleReviewer(): void {
     this.reviewerEnabled = !this.reviewerEnabled;
     if (!this.reviewerEnabled) {
@@ -339,12 +352,10 @@ export class ApplicationController implements TuiController {
     this.emit();
   }
 
-  async reloadGlossary(): Promise<void> {
-    return this.withLifecycle(async () => {
-      const count = await this.glossary.load();
-      this.logger.info(`Reloaded ${count} glossary terms`, "glossary");
-      this.emit();
-    });
+  setReviewerEnabled(enabled: boolean): void {
+    if (this.reviewerEnabled !== enabled) {
+      this.toggleReviewer();
+    }
   }
 
   async shutdown(): Promise<void> {
@@ -590,9 +601,6 @@ export class ApplicationController implements TuiController {
       sourceLanguage: this.sourceLanguage,
       targetLanguage: this.targetLanguage,
       model: this.model,
-      glossary: this.glossary
-        .matching(entry.sourceText)
-        .map(({ source, target }) => ({ source, target })),
       ...(recordingSessionId ? { recordingSessionId } : {}),
     };
     this.enqueueTranslation(entry, settings);
@@ -635,7 +643,6 @@ export class ApplicationController implements TuiController {
       sourceLanguage: settings.sourceLanguage,
       targetLanguage: settings.targetLanguage,
       context: contexts.slice(-4).map((turn) => ({ source: turn.source, translation: turn.translation })),
-      glossary: settings.glossary,
       model: settings.model,
     };
     const started = performance.now();
@@ -682,7 +689,6 @@ export class ApplicationController implements TuiController {
           sourceLanguage: settings.sourceLanguage,
           targetLanguage: settings.targetLanguage,
           context,
-          glossary: settings.glossary,
         },
         controller.signal,
       )
@@ -913,4 +919,50 @@ function formatLocalTime(epochMs: number): string {
   return [date.getHours(), date.getMinutes(), date.getSeconds()]
     .map((value) => String(value).padStart(2, "0"))
     .join(":");
+}
+
+function groupSubtitleParagraphs(
+  entries: readonly TuiSubtitleEntry[],
+  sourceId: AudioSourceId,
+): TuiSubtitleParagraph[] {
+  const sourceEntries = entries.filter((entry) => entry.sourceId === sourceId);
+  const paragraphs: TuiSubtitleParagraph[] = [];
+  let current: TuiSubtitleEntry[] = [];
+  let currentCharacters = 0;
+  let previousTime: number | undefined;
+
+  const commit = (): void => {
+    const first = current[0];
+    if (!first) return;
+    paragraphs.push({
+      id: first.id,
+      sourceId,
+      timestamp: first.timestamp,
+      sentences: current,
+    });
+    current = [];
+    currentCharacters = 0;
+  };
+
+  for (const entry of sourceEntries) {
+    const entryTime = timeOfDaySeconds(entry.timestamp);
+    const gapSeconds = previousTime === undefined ? 0 : Math.max(0, entryTime - previousTime);
+    const entryCharacters = entry.sourceText.length + entry.translation.length;
+    if (
+      current.length > 0 &&
+      (gapSeconds > 12 || current.length >= 4 || currentCharacters + entryCharacters > 720)
+    ) {
+      commit();
+    }
+    current.push(entry);
+    currentCharacters += entryCharacters;
+    previousTime = entryTime;
+  }
+  commit();
+  return paragraphs;
+}
+
+function timeOfDaySeconds(timestamp: string): number {
+  const [hours = 0, minutes = 0, seconds = 0] = timestamp.split(":").map(Number);
+  return hours * 3600 + minutes * 60 + seconds;
 }

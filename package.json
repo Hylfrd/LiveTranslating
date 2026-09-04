@@ -1,15 +1,24 @@
 {
   "name": "live-translating",
   "version": "0.1.0",
+  "description": "Windows live transcription and context-aware translation for system audio and microphones.",
+  "author": "Hylfrd",
   "private": true,
   "type": "module",
+  "main": "dist/desktop/main/index.js",
   "engines": {
     "node": ">=24"
   },
   "scripts": {
     "dev": "node --use-env-proxy --watch --env-file-if-exists=.env --import tsx src/index.ts",
     "dev:tui": "npm run build && node --use-env-proxy --env-file-if-exists=.env dist/cli.js",
-    "build": "tsc -p tsconfig.json",
+    "build": "npm run build:code && npm run build:preload && npm run build:renderer",
+    "build:code": "tsc -p tsconfig.json",
+    "build:preload": "node scripts/build-preload.mjs",
+    "build:renderer": "vite build",
+    "desktop": "npm run build && electron .",
+    "dev:desktop": "node scripts/dev-desktop.mjs",
+    "package:win": "npm run build && electron-builder --win portable --x64",
     "start": "node --use-env-proxy --env-file-if-exists=.env dist/index.js",
     "tui": "npm run build && node --use-env-proxy --env-file-if-exists=.env dist/cli.js",
     "benchmark:video": "npm run build && node --use-env-proxy --env-file-if-exists=.env dist/benchmark/video-benchmark.js",
@@ -21,15 +30,49 @@
     "@fastify/cors": "^11.3.0",
     "fastify": "^5.12.1",
     "ink": "^7.1.1",
+    "lucide-react": "^1.39.0",
     "native-audio-node": "^0.3.5",
     "openai": "^7.8.0",
     "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "zod": "^4.5.4"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.1.1",
+    "electron": "^44.1.1",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
     "tsx": "^4.23.13",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  },
+  "build": {
+    "appId": "com.hylfrd.live-translating",
+    "productName": "LiveTranslating",
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "assets/icon.png",
+      "assets/icon.ico",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/native-audio-node/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    }
   }
 }

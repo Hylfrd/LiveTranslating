@@ -6,7 +6,6 @@ import { FfmpegWhisperSession, type AsrTranscript } from "../asr/ffmpeg-whisper.
 import { AsrModelManager } from "../asr/model-manager.js";
 import { TranscriptAssembler } from "../asr/transcript-assembler.js";
 import { config } from "../config.js";
-import { matchGlossaryEntries } from "../glossary/glossary-store.js";
 import { AppLogger } from "../logging/app-logger.js";
 import {
   OpenAICompatibleTranslationProvider,
@@ -37,7 +36,8 @@ const MODELS: readonly TranslationModelId[] = [
   "deepseek-v4-flash",
 ];
 
-const GLOSSARY = [
+// Evaluation references are never sent to translation or review models.
+const REFERENCE_TERMS = [
   { source: "capital asset pricing model", target: "资本资产定价模型" },
   { source: "efficient portfolio frontier", target: "有效投资组合前沿" },
   { source: "tangency portfolio", target: "切点投资组合" },
@@ -97,7 +97,7 @@ interface TranslationMeasurement {
   readonly translation?: string;
   readonly usage?: TranslationUsage;
   readonly validationIssues?: readonly TranslationValidationIssue[];
-  readonly glossary: readonly { source: string; target: string }[];
+  readonly referenceTerms: readonly { source: string; target: string }[];
   readonly error?: string;
   readonly providerCode?: string;
 }
@@ -157,8 +157,8 @@ try {
   const hypothesisNumbers = normalizedNumbers(hypothesisText);
   const numberRecall = multisetRecall(referenceNumbers, hypothesisNumbers);
   const numberPrecision = multisetRecall(hypothesisNumbers, referenceNumbers);
-  const glossaryReference = GLOSSARY.filter((term) => includesTerm(referenceText, term.source));
-  const glossaryHypothesis = glossaryReference.filter((term) => includesTerm(hypothesisText, term.source));
+  const terminologyReference = REFERENCE_TERMS.filter((term) => includesTerm(referenceText, term.source));
+  const terminologyHypothesis = terminologyReference.filter((term) => includesTerm(hypothesisText, term.source));
 
   const translationStartedAt = performance.now();
   const translations = await translateSegments(asr.segments, provider);
@@ -210,9 +210,9 @@ try {
       numberF1: numberRecall === undefined || numberPrecision === undefined || numberRecall + numberPrecision === 0
         ? undefined
         : round(2 * numberRecall * numberPrecision / (numberRecall + numberPrecision), 4),
-      glossaryTermsExpected: glossaryReference.map((term) => term.source),
-      glossaryTermRecall: glossaryReference.length > 0
-        ? glossaryHypothesis.length / glossaryReference.length
+      terminologyReferencesExpected: terminologyReference.map((term) => term.source),
+      terminologyReferenceRecall: terminologyReference.length > 0
+        ? terminologyHypothesis.length / terminologyReference.length
         : undefined,
     },
     translation: {
@@ -419,7 +419,7 @@ async function translateSegments(
   const measurements: TranslationMeasurement[] = [];
 
   for (const segment of segments) {
-    const glossary = matchingGlossary(segment.text);
+    const referenceTerms = matchingReferenceTerms(segment.text);
     const results = await Promise.all(
       MODELS.map(async (model): Promise<TranslationMeasurement> => {
         const request: TranslationRequest = {
@@ -427,7 +427,6 @@ async function translateSegments(
           sourceLanguage: "en",
           targetLanguage: "zh",
           context: (contexts.get(model) ?? []).slice(-4),
-          glossary,
           model,
         };
         const startedAt = performance.now();
@@ -442,7 +441,7 @@ async function translateSegments(
             translation: result.text,
             ...(result.usage ? { usage: result.usage } : {}),
             validationIssues: validation.issues,
-            glossary,
+            referenceTerms,
           };
         } catch (error) {
           return {
@@ -450,7 +449,7 @@ async function translateSegments(
             model,
             latencyMs: performance.now() - startedAt,
             sourceText: segment.text,
-            glossary,
+            referenceTerms,
             error: error instanceof Error ? error.message : String(error),
             ...(error instanceof TranslationProviderError && error.providerCode
               ? { providerCode: error.providerCode }
@@ -506,7 +505,6 @@ async function reviewHardSegments(
                   source: item.sourceText,
                   translation: item.translation ?? "",
                 })),
-              glossary: [...candidate.glossary],
             });
             return {
               segmentIndex: segment.index,
@@ -546,10 +544,10 @@ function summarizeModel(
       issueCounts[issue] = (issueCounts[issue] ?? 0) + 1;
     }
   }
-  const expectedTerms = successful.flatMap((item) => item.glossary);
+  const expectedTerms = successful.flatMap((item) => item.referenceTerms);
   const matchedTerms = successful.flatMap((item) =>
-    item.glossary.filter((term) =>
-      normalizeGlossaryText(item.translation ?? "").includes(normalizeGlossaryText(term.target)),
+    item.referenceTerms.filter((term) =>
+      normalizeTerminologyText(item.translation ?? "").includes(normalizeTerminologyText(term.target)),
     ),
   );
   return {
@@ -571,8 +569,8 @@ function summarizeModel(
       ? round(successful.filter((item) => (item.validationIssues?.length ?? 0) === 0).length / successful.length, 4)
       : undefined,
     validationIssueCounts: issueCounts,
-    glossaryChecks: expectedTerms.length,
-    glossaryExactMatchRate: expectedTerms.length > 0
+    terminologyReferenceChecks: expectedTerms.length,
+    terminologyReferenceExactMatchRate: expectedTerms.length > 0
       ? round(matchedTerms.length / expectedTerms.length, 4)
       : undefined,
     finalErrors: Object.fromEntries(
@@ -618,16 +616,20 @@ function probeMedia(video: string): unknown {
   return JSON.parse(result.stdout) as unknown;
 }
 
-function matchingGlossary(text: string): Array<{ source: string; target: string }> {
-  return matchGlossaryEntries(GLOSSARY, text)
-    .map(({ source, target }) => ({ source, target }));
+function matchingReferenceTerms(text: string): Array<{ source: string; target: string }> {
+  const normalized = text.toLocaleLowerCase("en");
+  return REFERENCE_TERMS.filter((entry) =>
+    [entry.source, ...("aliases" in entry ? entry.aliases : [])].some((phrase) =>
+      normalized.includes(phrase.toLocaleLowerCase("en")),
+    ),
+  ).map(({ source, target }) => ({ source, target }));
 }
 
 function includesTerm(text: string, term: string): boolean {
   return text.toLocaleLowerCase("en").includes(term.toLocaleLowerCase("en"));
 }
 
-function normalizeGlossaryText(text: string): string {
+function normalizeTerminologyText(text: string): string {
   return text.normalize("NFKC").toLocaleLowerCase().replace(/\s+/gu, "");
 }
 
@@ -647,7 +649,7 @@ function speechRatio(segments: readonly BenchmarkSegment[], durationSeconds: num
 }
 
 function segmentDifficulty(text: string): number {
-  return text.length + matchingGlossary(text).length * 80 + normalizedNumbers(text).length * 30;
+  return text.length + matchingReferenceTerms(text).length * 80 + normalizedNumbers(text).length * 30;
 }
 
 function round(value: number, digits = 2): number {
@@ -675,7 +677,7 @@ function renderMarkdown(report: Record<string, unknown>): string {
     "",
     "## Translation",
     "",
-    "| Model | Success | p50 ms | p95 ms | Validation | Glossary | Review corrections | 429 retries |",
+    "| Model | Success | p50 ms | p95 ms | Validation | Reference terms | Review corrections | 429 retries |",
     "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   ];
   for (const model of MODELS) {
@@ -683,7 +685,7 @@ function renderMarkdown(report: Record<string, unknown>): string {
     const latency = (item.latencyMs ?? {}) as Record<string, unknown>;
     const review = (item.review ?? {}) as Record<string, unknown>;
     lines.push(
-      `| ${model} | ${percent(item.successRate)} | ${String(latency.p50 ?? 0)} | ${String(latency.p95 ?? 0)} | ${percent(item.validationPassRate)} | ${percent(item.glossaryExactMatchRate)} | ${String(review.corrections ?? 0)}/${String(review.successes ?? 0)} | ${String(item.rateLimitRetries ?? 0)} |`,
+      `| ${model} | ${percent(item.successRate)} | ${String(latency.p50 ?? 0)} | ${String(latency.p95 ?? 0)} | ${percent(item.validationPassRate)} | ${percent(item.terminologyReferenceExactMatchRate)} | ${String(review.corrections ?? 0)}/${String(review.successes ?? 0)} | ${String(item.rateLimitRetries ?? 0)} |`,
     );
   }
   return `${lines.join("\n")}\n`;

@@ -19,7 +19,7 @@ WASAPI system audio / selected microphone
 ```
 
 The Node.js backend owns capture state, source isolation, translation queues,
-glossary matching, recording sessions, logs, retries, cancellation, and the
+short-lived per-source context, recording sessions, logs, retries, cancellation, and the
 HTTP API. Native code is limited to the prebuilt Windows WASAPI binding and
 FFmpeg's Whisper inference filter; the interface is rendered directly in the terminal.
 
@@ -29,6 +29,23 @@ FFmpeg's Whisper inference filter; the interface is rendered directly in the ter
 npm install
 npm run tui
 ```
+
+The terminal UI remains available. To run the Windows desktop interface:
+
+```powershell
+npm run desktop
+```
+
+For renderer development with browser preview and Electron hot reload support:
+
+```powershell
+npm run dev:desktop
+```
+
+The desktop app provides separate System audio and Microphone transcript pages,
+a settings page, and a compact subtitle window. Browser-only visual previews are
+available from the Vite server with `?surface=main&preview=1` or
+`?surface=compact&preview=1`; preview data is never enabled in Electron.
 
 On first capture, the app downloads the multilingual Whisper large-v3-turbo Q8
 model and Silero VAD to `models/`. Verified mirrors are tried in order.
@@ -45,22 +62,15 @@ model and Silero VAD to `models/`. Verified mirrors are tried in order.
 | `l` | Cycle selected source/target language |
 | `r` | Start or stop per-source recording |
 | `v` | Toggle delayed DeepSeek review |
-| `g` | Reload the session glossary |
 | `q` | Stop and exit |
 
-## Glossary
+## Delayed review
 
-The runtime glossary is `data/glossary.json`. It is created automatically and
-is intentionally ignored by Git. Its format matches `glossary.example.json`:
-
-```json
-[
-  { "source": "operating cash flow", "target": "经营现金流" }
-]
-```
-
-Only terms matched exactly, through explicit aliases, or by high-confidence
-fuzzy matching are sent to translation and review models.
+DeepSeek V4 Flash reviews terminology in each initial translation against the
+original text and the same source's recent context. It changes only
+well-supported terminology errors and does not maintain a glossary or persist
+inferred terminology rules. Reference terminology in the lecture benchmark is
+used only for scoring and is never sent to the models.
 
 ## Recordings and logs
 

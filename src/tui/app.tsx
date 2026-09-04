@@ -19,8 +19,7 @@ type MenuItemId =
   | "sourceLanguage"
   | "targetLanguage"
   | "model"
-  | "reviewer"
-  | "glossary";
+  | "reviewer";
 
 interface MenuItem {
   readonly id: MenuItemId;
@@ -223,11 +222,6 @@ export function TuiApp({ controller, title = "LiveTranslating", onError }: TuiAp
           ? `ON${snapshot.reviewQueueSize ? ` (${snapshot.reviewQueueSize} queued)` : ""}`
           : "OFF",
       },
-      {
-        id: "glossary",
-        label: "Session glossary",
-        value: `${snapshot.glossaryCount} terms`,
-      },
     ];
   }, [snapshot]);
 
@@ -291,9 +285,6 @@ export function TuiApp({ controller, title = "LiveTranslating", onError }: TuiAp
       case "reviewer":
         runAction(() => controller.toggleReviewer());
         break;
-      case "glossary":
-        runAction(() => controller.reloadGlossary());
-        break;
     }
   }, [controller, runAction]);
 
@@ -339,8 +330,6 @@ export function TuiApp({ controller, title = "LiveTranslating", onError }: TuiAp
       runAction(() => controller.toggleRecording());
     } else if (input === "v") {
       runAction(() => controller.toggleReviewer());
-    } else if (input === "g") {
-      runAction(() => controller.reloadGlossary());
     }
   });
 
@@ -393,7 +382,7 @@ export function TuiApp({ controller, title = "LiveTranslating", onError }: TuiAp
       <LogPanel snapshot={snapshot} limit={logLimit} />
 
       <Text color={tuiColors.dim} wrap="truncate-end">
-        Up/Down or j/k select  Space toggle  Enter start/stop  d device  m model  l language  r record  v review  g glossary  q quit
+        Up/Down or j/k select  Space toggle  Enter start/stop  d device  m model  l language  r record  v review  q quit
       </Text>
     </Box>
   );

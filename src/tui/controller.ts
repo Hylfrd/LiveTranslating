@@ -43,6 +43,13 @@ export interface TuiSubtitleEntry {
   readonly isFinal: boolean;
 }
 
+export interface TuiSubtitleParagraph {
+  readonly id: string;
+  readonly sourceId: TuiSourceId;
+  readonly timestamp: string;
+  readonly sentences: readonly TuiSubtitleEntry[];
+}
+
 export type TuiLogLevel = "debug" | "info" | "warn" | "error";
 
 export interface TuiLogEntry {
@@ -66,9 +73,8 @@ export interface TuiSnapshot {
   readonly recording: boolean;
   readonly reviewerEnabled: boolean;
   readonly reviewQueueSize?: number;
-  readonly glossaryCount: number;
-  readonly glossaryUpdatedAt?: string;
   readonly subtitles: readonly TuiSubtitleEntry[];
+  readonly paragraphs?: Readonly<Record<TuiSourceId, readonly TuiSubtitleParagraph[]>>;
   readonly logs: readonly TuiLogEntry[];
 }
 
@@ -91,7 +97,6 @@ export interface TuiController {
   cycleModel(direction?: 1 | -1): TuiActionResult;
   toggleRecording(): TuiActionResult;
   toggleReviewer(): TuiActionResult;
-  reloadGlossary(): TuiActionResult;
   shutdown(): TuiActionResult;
 }
 

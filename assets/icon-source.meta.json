@@ -1,0 +1,27 @@
+{
+  "mode": "generate",
+  "model": "gpt-image-2",
+  "size": "2048x2048",
+  "quality": "high",
+  "output_format": "png",
+  "output": "assets\\icon-source.png",
+  "dimensions": {
+    "output": "assets\\icon-source.png",
+    "width": 1254,
+    "height": 1254,
+    "bytes": 593436,
+    "requested_size": "2048x2048",
+    "size_ok": false
+  },
+  "prompt": null,
+  "prompt_file": "prompts\\icon-live-translating.txt",
+  "prompt_snapshot": "Design a single production app icon for a Windows 11 desktop application named LiveTranslating. Output only the centered icon artwork on a transparent background, no device mockup, no screenshot, no surrounding UI, no words, no letters, no watermark.\n\nThe symbol must communicate live audio becoming bilingual captions at 16px, 24px, 32px, and 48px. Use one bold continuous geometric mark: a compact vertical audio waveform entering from the left and resolving into two aligned subtitle lines on the right, held together by a subtle open-caption bracket shape. Add one very small coral-red live dot as the only status accent. Main colors are deep charcoal and clear broadcast teal, with restrained white negative space. Avoid gradients, purple, blue glow, microphones, globes, flags, chat bubbles, literal language characters, and tiny details. Use thick clean edges, balanced optical weight, simple silhouette, Windows 11-quality soft dimensional finish without a rounded-square background tile. The icon must remain distinct on both light and dark taskbars.\n",
+  "images": [],
+  "config_path": "codex:C:\\Users\\Apostrophe\\.codex\\config.toml:C:\\Users\\Apostrophe\\.codex\\auth.json:custom",
+  "config_source": "codex",
+  "codex_provider": "custom",
+  "ccswitch_provider": null,
+  "base_url": "https://sub2api.tk2.xiaoqingtech.org/v1",
+  "elapsed_seconds": 54.75,
+  "created_at": "2026-09-03T11:28:58"
+}

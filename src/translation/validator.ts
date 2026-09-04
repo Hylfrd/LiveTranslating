@@ -6,7 +6,6 @@ export type TranslationValidationIssue =
   | "NUMBER_MISMATCH"
   | "DATE_MISMATCH"
   | "CURRENCY_MISMATCH"
-  | "GLOSSARY_MISMATCH"
   | "ENGLISH_RESIDUE"
   | "EXTRA_EXPLANATION";
 
@@ -213,14 +212,6 @@ export function validateTranslation(
   if (sourceCurrencies.some((currency) => !translatedCurrencies.includes(currency))) {
     issues.push("CURRENCY_MISMATCH");
   }
-  const normalizedTranslation = normalizeGlossaryText(text);
-  if (
-    request.glossary.some(
-      (entry) => !normalizedTranslation.includes(normalizeGlossaryText(entry.target)),
-    )
-  ) {
-    issues.push("GLOSSARY_MISMATCH");
-  }
   if (hasObviousEnglishResidue(request, text)) {
     issues.push("ENGLISH_RESIDUE");
   }
@@ -229,8 +220,4 @@ export function validateTranslation(
   }
 
   return { valid: issues.length === 0, issues };
-}
-
-function normalizeGlossaryText(text: string): string {
-  return text.normalize("NFKC").toLocaleLowerCase().replace(/\s+/gu, "");
 }

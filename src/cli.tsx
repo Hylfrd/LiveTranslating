@@ -25,7 +25,6 @@ if (smoke) {
         microphones: snapshot.microphoneDevices.map((device) => device.label),
         model: snapshot.model,
         reviewer: snapshot.reviewerEnabled,
-        glossaryCount: snapshot.glossaryCount,
       },
       null,
       2,

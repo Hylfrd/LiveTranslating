@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-04T10:54:01.1746174+08:00",
+  "title": "Design System: LiveTranslating",
+  "extensions": {
+    "colorMeta": {
+      "ink": {
+        "role": "neutral",
+        "displayName": "Console Ink",
+        "canonical": "#202426",
+        "tonalRamp": ["#111314", "#202426", "#3a4042", "#596164", "#7d8689", "#a6adaf", "#d2d6d7", "#f3f5f5"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Translation White",
+        "canonical": "#ffffff",
+        "tonalRamp": ["#191a1a", "#353636", "#555656", "#777878", "#9b9c9c", "#c0c1c1", "#e4e5e5", "#ffffff"]
+      },
+      "listening-teal": {
+        "role": "primary",
+        "displayName": "Listening Teal",
+        "canonical": "#087f78",
+        "tonalRamp": ["#032724", "#05423e", "#07615b", "#087f78", "#28a19a", "#64c0ba", "#a7ded9", "#e7f6f4"]
+      },
+      "error-red": {
+        "role": "secondary",
+        "displayName": "Tally Red",
+        "canonical": "#b93734",
+        "tonalRamp": ["#32100f", "#5a1b19", "#842724", "#b93734", "#d75f5c", "#e8918f", "#f3c4c2", "#fbefee"]
+      },
+      "focus-blue": {
+        "role": "tertiary",
+        "displayName": "Windows Focus Blue",
+        "canonical": "#0b70c9",
+        "tonalRamp": ["#06213a", "#08395f", "#0a548f", "#0b70c9", "#3b91dd", "#76b3ea", "#b3d7f4", "#ebf6fd"]
+      }
+    },
+    "typographyMeta": {
+      "title": { "displayName": "Workspace title", "purpose": "Source and primary section identity." },
+      "body": { "displayName": "Source text", "purpose": "Readable but subordinate source-language paragraphs." },
+      "translation": { "displayName": "Translation", "purpose": "Dominant translated paragraph text." },
+      "label": { "displayName": "Operational label", "purpose": "Controls, state, time, latency, and logs." }
+    },
+    "shadows": [
+      { "name": "compact-window", "value": "0 12px 34px rgb(25 30 34 / 20%)", "purpose": "Separates the compact subtitle window from content behind it." },
+      { "name": "error-toast", "value": "0 14px 36px rgb(62 29 26 / 18%)", "purpose": "Lifts transient error feedback above the workspace." }
+    ],
+    "motion": [
+      { "name": "ease-out", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Switch thumbs, Toast entry, and latest-subtitle movement." },
+      { "name": "state-fast", "value": "150ms ease", "purpose": "Hover and focus-adjacent color changes." }
+    ],
+    "breakpoints": [
+      { "name": "compact-sidebar", "value": "1040px" },
+      { "name": "icon-sidebar", "value": "760px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Run Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Starts capture with the listening color and a stable desktop-control height.",
+      "html": "<button class=\"ds-btn-primary\">START LISTENING</button>",
+      "css": ".ds-btn-primary { height: 37px; padding: 0 12px; border: 1px solid var(--teal); border-radius: 5px; color: #fff; background: var(--teal); font: 600 12px 'Segoe UI', sans-serif; transition: background-color 150ms ease, border-color 150ms ease; } .ds-btn-primary:hover { border-color: var(--teal-dark); background: var(--teal-dark); } .ds-btn-primary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Command",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Opens a secondary surface without competing with capture.",
+      "html": "<button class=\"ds-btn-secondary\">OPEN SUBTITLES</button>",
+      "css": ".ds-btn-secondary { height: 37px; padding: 0 12px; border: 1px solid var(--rule-strong); border-radius: 5px; color: var(--ink); background: #fff; font: 600 12px 'Segoe UI', sans-serif; transition: background-color 150ms ease, border-color 150ms ease; } .ds-btn-secondary:hover { border-color: #a8b0b1; background: #fafbfb; } .ds-btn-secondary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }"
+    },
+    {
+      "name": "Translation Field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "Compact labeled field for language and model selection.",
+      "html": "<label class=\"ds-field\"><span>PRIMARY MODEL</span><select><option>DeepSeek V4 Flash</option></select></label>",
+      "css": ".ds-field { display: flex; flex-direction: column; gap: 5px; color: var(--ink-faint); font: 600 12px 'Segoe UI', sans-serif; } .ds-field select { height: 33px; padding: 0 30px 0 10px; border: 1px solid var(--rule-strong); border-radius: 5px; color: var(--ink); background: #fff; font-size: 13px; font-weight: 600; } .ds-field select:hover { border-color: #9da7a8; } .ds-field select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }"
+    },
+    {
+      "name": "Active Navigation Row",
+      "kind": "nav",
+      "description": "Marks the current source page while preserving a dense control rail.",
+      "html": "<button class=\"ds-nav-active\"><span>COMPUTER AUDIO</span><i></i></button>",
+      "css": ".ds-nav-active { display: grid; width: 190px; height: 42px; padding: 0 10px; grid-template-columns: 1fr 7px; align-items: center; gap: 9px; border: 0; border-radius: 5px; color: #fff; background: #303638; font: 600 12px 'Segoe UI', sans-serif; text-align: left; } .ds-nav-active i { width: 7px; height: 7px; border-radius: 50%; background: #17a099; } .ds-nav-active:hover { background: #3a4143; } .ds-nav-active:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }"
+    },
+    {
+      "name": "Listening Toggle",
+      "kind": "custom",
+      "description": "A compact semantic switch for binary capture and review settings.",
+      "html": "<button class=\"ds-toggle\" role=\"switch\" aria-checked=\"true\"><span></span></button>",
+      "css": ".ds-toggle { position: relative; width: 38px; height: 22px; padding: 0; border: 1px solid var(--teal); border-radius: 999px; background: var(--teal); } .ds-toggle span { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgb(18 29 29 / 24%); transform: translateX(16px); transition: transform 170ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-toggle:hover { border-color: var(--teal-dark); } .ds-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Interpreter Desk",
+    "overview": "A quiet, ruled Windows workspace where live translation owns the reading field and operational controls stay compact, factual, and close to native desktop expectations.",
+    "keyCharacteristics": [
+      "White and cool-gray work surfaces with near-black text.",
+      "Listening teal is reserved for active state and primary action.",
+      "Bilingual paragraphs, not isolated translation cards, are the main content unit.",
+      "Borders establish structure; shadows are reserved for transient or detached surfaces."
+    ],
+    "rules": [
+      { "name": "The Semantic Accent Rule", "body": "Teal means listening, active, or healthy; red means recording or failure; amber means caution; blue is reserved for keyboard focus and connection progress.", "section": "colors" },
+      { "name": "The White Field Rule", "body": "The transcript and settings reading surfaces remain white. Cool gray separates navigation and compact-window material without turning sections into floating cards.", "section": "colors" },
+      { "name": "The Translation Leads Rule", "body": "Source text remains readable but subordinate; translated text receives the strongest weight and scale on every subtitle surface.", "section": "typography" },
+      { "name": "The Flat Workspace Rule", "body": "Persistent page sections never use decorative shadows. Elevation communicates detachment or temporary feedback, not importance.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep computer audio and microphone content on independent pages.",
+      "Do group committed sentences into continuous bilingual paragraphs.",
+      "Do keep operational metadata at 12px or larger and use tabular numerals for time and latency.",
+      "Do use Lucide icons, visible keyboard focus, high-contrast states, and reduced-motion fallbacks."
+    ],
+    "donts": [
+      "Don't add a right-side dashboard, top command banner, or nested card grid.",
+      "Don't split the transcript into current and history visual tiers.",
+      "Don't fade older compact subtitles with parent opacity.",
+      "Don't use accent colors without a capture, health, recording, warning, error, or focus meaning."
+    ]
+  }
+}

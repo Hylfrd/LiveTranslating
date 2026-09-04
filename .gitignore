@@ -12,5 +12,8 @@ data/
 logs/
 models/
 recordings/
+release/
 .impeccable/build/
 .impeccable/review/
+.impeccable/mocks/
+.impeccable/questions/

@@ -37,9 +37,13 @@ export function buildReviewSystemPrompt(
   const target = languageName(targetLanguage);
 
   return [
-    `Review a live-subtitle translation from ${source} to ${target}.`,
-    "Use the source, candidate translation, recent context, and glossary as evidence.",
-    "Correct only genuine translation, terminology, entity, number, or fluency errors.",
+    `Review domain terminology in a live-subtitle translation from ${source} to ${target}.`,
+    "Use the source, candidate translation, and recent context as primary evidence.",
+    "Determine whether any expression has a domain-specific meaning in context rather than an ordinary meaning.",
+    "Change the candidate only when it contains a well-supported terminology error.",
+    "Do not rewrite general wording, style, fluency, numbers, names, or already acceptable terminology.",
+    "Do not assume every unusual phrase is terminology. Prefer the candidate when context is inconclusive.",
+    "Your decision applies only to this subtitle; do not create or imply persistent terminology rules.",
     "If the candidate is already correct, return it unchanged.",
     "Return only the final reviewed translation with no label, explanation, alternatives, or quotes.",
   ].join("\n");

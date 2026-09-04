@@ -6,7 +6,6 @@ import { FfmpegWhisperSession, type AsrTranscript } from "../asr/ffmpeg-whisper.
 import { AsrModelManager } from "../asr/model-manager.js";
 import { TranscriptAssembler } from "../asr/transcript-assembler.js";
 import { config } from "../config.js";
-import { GlossaryStore } from "../glossary/glossary-store.js";
 import { AppLogger } from "../logging/app-logger.js";
 import { OpenAICompatibleTranslationProvider } from "../translation/provider.js";
 import type { TranslationModelId } from "../translation/schema.js";
@@ -48,8 +47,6 @@ const outputDirectory = path.resolve(`${input.outputDirectory}-latency`);
 await mkdir(outputDirectory, { recursive: true });
 
 const logger = new AppLogger(outputDirectory);
-const glossary = new GlossaryStore(process.cwd());
-await glossary.load();
 const provider = new OpenAICompatibleTranslationProvider(config.translation);
 const telemetry: Array<{ model: string; type: string }> = [];
 const unsubscribe = provider.registry.subscribeTelemetry((event) => telemetry.push(event));
@@ -76,16 +73,12 @@ try {
     records.push(record);
     const job = translationTail.then(async () => {
       record.queueStartedAt = Date.now();
-      const matchedGlossary = glossary
-        .matching(record.sourceText)
-        .map(({ source, target }) => ({ source, target }));
       try {
         const result = await provider.translate({
           text: record.sourceText,
           sourceLanguage: "en",
           targetLanguage: "zh",
           context: contexts.slice(-4),
-          glossary: matchedGlossary,
           model: input.translationModel ?? "hy-mt2-plus",
         });
         record.translation = result.text;
@@ -99,7 +92,6 @@ try {
             sourceLanguage: "en",
             targetLanguage: "zh",
             context: reviewContext,
-            glossary: matchedGlossary,
           })
           .then((reviewResult) => {
             record.revisedTranslation = reviewResult.reviewedTranslation;
