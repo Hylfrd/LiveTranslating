@@ -12,6 +12,7 @@ data/
 logs/
 models/
 recordings/
+archives/
 release/
 .impeccable/build/
 .impeccable/review/

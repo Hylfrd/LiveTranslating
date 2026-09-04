@@ -1,29 +1,37 @@
 import { existsSync } from "node:fs";
+import { copyFile, cp } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   type IpcMainInvokeEvent,
 } from "electron";
 
 import type { ApplicationController } from "../../app/application-controller.js";
 import type { TuiSnapshot } from "../../tui/controller.js";
-import type { DesktopWindowCommand } from "../preload/contract.js";
+import type {
+  DesktopExportKind,
+  DesktopExportResult,
+  DesktopWindowCommand,
+} from "../preload/contract.js";
 import { dispatchControllerAction } from "./controller-actions.js";
 
 const SNAPSHOT_GET_CHANNEL = "live-translating:snapshot:get";
 const SNAPSHOT_UPDATED_CHANNEL = "live-translating:snapshot:updated";
 const ACTION_CHANNEL = "live-translating:controller:action";
 const WINDOW_CHANNEL = "live-translating:window:control";
+const EXPORT_CHANNEL = "live-translating:archive:export";
 const WINDOW_COMMANDS = new Set<DesktopWindowCommand>([
   "open-overlay",
   "expand-overlay",
   "minimize",
   "close",
 ]);
+const EXPORT_KINDS = new Set<DesktopExportKind>(["audio", "transcription", "translation"]);
 
 type Surface = "main" | "compact";
 
@@ -101,7 +109,7 @@ function createWindows(): void {
     backgroundColor: "#f7f8fa",
     autoHideMenuBar: true,
     skipTaskbar: false,
-    title: "同传席",
+    title: "LiveTranslating",
     ...(icon ? { icon } : {}),
     webPreferences: sharedWebPreferences,
   });
@@ -121,7 +129,7 @@ function createWindows(): void {
     fullscreenable: false,
     autoHideMenuBar: true,
     skipTaskbar: false,
-    title: "同传席 - 字幕",
+    title: "LiveTranslating - 字幕",
     ...(icon ? { icon } : {}),
     webPreferences: sharedWebPreferences,
   });
@@ -198,12 +206,84 @@ function registerIpcHandlers(): void {
     }
     await controlWindow(senderWindow, rawCommand as DesktopWindowCommand);
   });
+
+  ipcMain.handle(EXPORT_CHANNEL, async (event, rawRequest: unknown): Promise<DesktopExportResult> => {
+    const senderWindow = assertTrustedSender(event);
+    if (senderWindow !== mainWindow) {
+      throw new Error("Archive export is available only in the main window");
+    }
+    if (
+      !isRecord(rawRequest)
+      || (rawRequest.sourceId !== "system" && rawRequest.sourceId !== "microphone")
+      || typeof rawRequest.kind !== "string"
+      || !EXPORT_KINDS.has(rawRequest.kind as DesktopExportKind)
+    ) {
+      throw new TypeError("Unsupported archive export kind");
+    }
+    return exportArchive(
+      senderWindow,
+      rawRequest.sourceId,
+      rawRequest.kind as DesktopExportKind,
+    );
+  });
 }
 
 function unregisterIpcHandlers(): void {
   ipcMain.removeHandler(SNAPSHOT_GET_CHANNEL);
   ipcMain.removeHandler(ACTION_CHANNEL);
   ipcMain.removeHandler(WINDOW_CHANNEL);
+  ipcMain.removeHandler(EXPORT_CHANNEL);
+}
+
+async function exportArchive(
+  owner: BrowserWindow,
+  sourceId: "system" | "microphone",
+  kind: DesktopExportKind,
+): Promise<DesktopExportResult> {
+  const descriptor = requireController().archiveExportPath(sourceId, kind);
+  if (!descriptor) {
+    throw new Error("No completed session is available to export");
+  }
+  if (kind === "audio") {
+    const selection = await dialog.showOpenDialog(owner, {
+      title: "选择录音导出位置",
+      buttonLabel: "导出录音",
+      properties: ["openDirectory", "createDirectory"],
+    });
+    const parent = selection.filePaths[0];
+    if (selection.canceled || !parent) {
+      return { canceled: true, kind };
+    }
+    const destination = availableDirectory(path.join(parent, descriptor.name));
+    await cp(descriptor.path, destination, { recursive: true, errorOnExist: true, force: false });
+    requireController().notifyExport(destination);
+    return { canceled: false, kind, destination };
+  }
+  const selection = await dialog.showSaveDialog(owner, {
+    title: kind === "transcription" ? "导出纯文字稿" : "导出双语翻译稿",
+    buttonLabel: "导出 Markdown",
+    defaultPath: descriptor.name,
+    filters: [{ name: "Markdown", extensions: ["md"] }],
+  });
+  if (selection.canceled || !selection.filePath) {
+    return { canceled: true, kind };
+  }
+  await copyFile(descriptor.path, selection.filePath);
+  requireController().notifyExport(selection.filePath);
+  return { canceled: false, kind, destination: selection.filePath };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function availableDirectory(requested: string): string {
+  for (let suffix = 1; ; suffix += 1) {
+    const candidate = suffix === 1 ? requested : `${requested}_${suffix}`;
+    if (!existsSync(candidate)) {
+      return candidate;
+    }
+  }
 }
 
 function enqueueControllerAction(task: () => Promise<TuiSnapshot>): Promise<TuiSnapshot> {
@@ -328,7 +408,7 @@ function requireController(): ApplicationController {
 }
 
 function resolveRuntimeRoot(): string {
-  return app.isPackaged ? app.getPath("userData") : process.cwd();
+  return app.isPackaged ? path.dirname(process.execPath) : process.cwd();
 }
 
 function loadEnvironment(rootDirectory: string): void {

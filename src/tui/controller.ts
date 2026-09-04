@@ -1,4 +1,7 @@
+import type { BillingSnapshot } from "../billing/types.js";
+
 export type TuiSourceId = "system" | "microphone";
+export type TuiSessionPhase = "idle" | "recording" | "paused" | "saving";
 
 export type TuiSourcePhase =
   | "disabled"
@@ -31,7 +34,8 @@ export interface TuiLanguage {
   readonly label: string;
 }
 
-export type TuiTranslationModel = "deepseek-v4-flash" | "hy-mt2-plus" | "hy-mt2-pro";
+export type TuiTranslationModel = "hy-mt2-plus" | "hy-mt2-pro";
+export type TuiReviewModel = "deepseek-v4-flash" | "deepseek-v4-pro";
 
 export interface TuiSubtitleEntry {
   readonly id: string;
@@ -40,6 +44,7 @@ export interface TuiSubtitleEntry {
   readonly sourceText: string;
   readonly translation: string;
   readonly revisedTranslation?: string;
+  readonly translationOmitted?: boolean;
   readonly isFinal: boolean;
 }
 
@@ -60,8 +65,44 @@ export interface TuiLogEntry {
   readonly message: string;
 }
 
+export interface TuiArchivedSession {
+  readonly sourceId: TuiSourceId;
+  readonly name: string;
+  readonly savedAt: string;
+  readonly audioDirectory: string;
+  readonly transcriptionPath: string;
+  readonly translationPath: string;
+}
+
+export interface TuiArchiveState {
+  readonly rootDirectory: string;
+  readonly currentName: string;
+  readonly lastSaved?: TuiArchivedSession;
+}
+
+export interface TuiSourceSessionState {
+  readonly phase: TuiSessionPhase;
+  readonly recording: boolean;
+  readonly archive: TuiArchiveState;
+}
+
+export interface TuiNotification {
+  readonly id: string;
+  readonly kind: "success" | "info" | "error";
+  readonly message: string;
+}
+
+export interface TuiModelHealth {
+  readonly model: "hy-mt2-plus" | "hy-mt2-pro" | "deepseek-v4-flash" | "deepseek-v4-pro";
+  readonly status: "idle" | "testing" | "available" | "unavailable" | "not-configured";
+  readonly latencyMs?: number;
+  readonly checkedAt?: string;
+  readonly error?: string;
+}
+
 export interface TuiSnapshot {
   readonly running: boolean;
+  readonly sessionPhase: TuiSessionPhase;
   readonly transitioning?: boolean;
   readonly sources: Readonly<Record<TuiSourceId, TuiSourceState>>;
   readonly microphoneDevices: readonly TuiAudioDevice[];
@@ -71,8 +112,15 @@ export interface TuiSnapshot {
   readonly targetLanguage: string;
   readonly model: TuiTranslationModel;
   readonly recording: boolean;
+  readonly sessions: Readonly<Record<TuiSourceId, TuiSourceSessionState>>;
+  readonly billing: BillingSnapshot;
+  readonly notifications: readonly TuiNotification[];
   readonly reviewerEnabled: boolean;
+  readonly secondaryTranslationEnabled: boolean;
+  readonly terminologyReviewEnabled: boolean;
+  readonly terminologyReviewModel: TuiReviewModel;
   readonly reviewQueueSize?: number;
+  readonly modelHealth: readonly TuiModelHealth[];
   readonly subtitles: readonly TuiSubtitleEntry[];
   readonly paragraphs?: Readonly<Record<TuiSourceId, readonly TuiSubtitleParagraph[]>>;
   readonly logs: readonly TuiLogEntry[];
@@ -90,13 +138,23 @@ export interface TuiController {
   subscribe(listener: (snapshot: TuiSnapshot) => void): TuiUnsubscribe;
 
   toggleRunning(): TuiActionResult;
+  startSession(sourceId: TuiSourceId): TuiActionResult;
+  pauseSession(sourceId: TuiSourceId): TuiActionResult;
+  resumeSession(sourceId: TuiSourceId): TuiActionResult;
+  stopSession(sourceId: TuiSourceId): TuiActionResult;
   toggleSource(sourceId: TuiSourceId): TuiActionResult;
   cycleMicrophoneDevice(direction?: 1 | -1): TuiActionResult;
   cycleSourceLanguage(direction?: 1 | -1): TuiActionResult;
   cycleTargetLanguage(direction?: 1 | -1): TuiActionResult;
   cycleModel(direction?: 1 | -1): TuiActionResult;
-  toggleRecording(): TuiActionResult;
   toggleReviewer(): TuiActionResult;
+  toggleSecondaryTranslation(): TuiActionResult;
+  toggleTerminologyReview(): TuiActionResult;
+  cycleTerminologyReviewModel(direction?: 1 | -1): TuiActionResult;
+  testModels(): TuiActionResult;
+  setArchiveName(sourceId: TuiSourceId, name: string): TuiActionResult;
+  refreshPricing(): TuiActionResult;
+  dismissNotification(id: string): TuiActionResult;
   shutdown(): TuiActionResult;
 }
 

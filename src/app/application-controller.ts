@@ -5,14 +5,23 @@ import { FfmpegWhisperSession, type AsrTranscript } from "../asr/ffmpeg-whisper.
 import { AsrModelManager } from "../asr/model-manager.js";
 import { TranscriptAssembler, cleanAsrText } from "../asr/transcript-assembler.js";
 import type { AudioSourceId } from "../audio/types.js";
+import { BillingTracker } from "../billing/billing-tracker.js";
 import { config } from "../config.js";
 import { AppLogger } from "../logging/app-logger.js";
-import { RecordingManager } from "../recording/recording-manager.js";
+import {
+  createDefaultArchiveName,
+  type ArchiveExportKind,
+  RecordingManager,
+} from "../recording/recording-manager.js";
 import { NativeAudioManager, type AudioManagerEvent } from "../sources/native-audio-manager.js";
 import type {
   TuiAudioDevice,
   TuiController,
   TuiLanguage,
+  TuiModelHealth,
+  TuiNotification,
+  TuiReviewModel,
+  TuiSessionPhase,
   TuiSnapshot,
   TuiSourcePhase,
   TuiSourceState,
@@ -21,7 +30,7 @@ import type {
   TuiTranslationModel,
 } from "../tui/controller.js";
 import { OpenAICompatibleTranslationProvider } from "../translation/provider.js";
-import type { TranslationRequest } from "../translation/schema.js";
+import type { ProviderModelId, TranslationRequest, TranslationResult } from "../translation/schema.js";
 
 const SOURCE_LANGUAGES: readonly TuiLanguage[] = [
   { code: "auto", label: "Auto detect" },
@@ -74,6 +83,10 @@ interface TranslationJobSettings {
   readonly sourceLanguage: string;
   readonly targetLanguage: string;
   readonly model: TuiTranslationModel;
+  readonly secondaryTranslationEnabled: boolean;
+  readonly reviewerEnabled: boolean;
+  readonly terminologyReviewEnabled: boolean;
+  readonly terminologyReviewModel: TuiReviewModel;
   readonly recordingSessionId?: string;
 }
 
@@ -81,6 +94,7 @@ export class ApplicationController implements TuiController {
   private readonly events = new EventEmitter();
   private readonly logger: AppLogger;
   private readonly recording: RecordingManager;
+  private readonly billing = new BillingTracker();
   private readonly audio: NativeAudioManager;
   private readonly asrModels: AsrModelManager;
   private readonly translator = new OpenAICompatibleTranslationProvider(config.translation);
@@ -90,6 +104,7 @@ export class ApplicationController implements TuiController {
   private readonly translationControllers = new Map<string, AbortController>();
   private readonly reviewControllers = new Map<string, AbortController>();
   private readonly reviewTasks = new Set<Promise<void>>();
+  private readonly reviewTasksBySource = new Map<AudioSourceId, Set<Promise<void>>>();
   private readonly contexts = new Map<AudioSourceId, ContextTurn[]>();
   private readonly lastTranscripts = new Map<AudioSourceId, { text: string; at: number }>();
   private readonly sourceGenerations = new Map<AudioSourceId, number>();
@@ -103,15 +118,33 @@ export class ApplicationController implements TuiController {
   private microphones: TuiAudioDevice[] = [];
   private subtitles: TuiSubtitleEntry[] = [];
   private running = false;
+  private readonly sessionPhases: Record<AudioSourceId, TuiSessionPhase> = {
+    system: "idle",
+    microphone: "idle",
+  };
   private transitioning = false;
-  private sourceLanguage = "en";
+  private readonly archiveNames: Record<AudioSourceId, string> = {
+    system: createDefaultArchiveName(),
+    microphone: createDefaultArchiveName(),
+  };
+  private notifications: TuiNotification[] = [];
+  private sourceLanguage = "auto";
   private targetLanguage = "zh";
-  private model: TuiTranslationModel = "deepseek-v4-flash";
-  private reviewerEnabled = true;
+  private model: TuiTranslationModel = "hy-mt2-plus";
+  private reviewerEnabled = false;
+  private secondaryTranslationEnabled = false;
+  private terminologyReviewEnabled = true;
+  private terminologyReviewModel: TuiReviewModel = "deepseek-v4-flash";
   private reviewQueueSize = 0;
+  private modelHealth: TuiModelHealth[] = ([
+    "hy-mt2-plus",
+    "hy-mt2-pro",
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+  ] as const).map((model) => ({ model, status: "idle" }));
   private readonly sources: Record<AudioSourceId, MutableSourceState> = {
     system: {
-      enabled: false,
+      enabled: true,
       phase: "disabled",
       deviceId: undefined,
       deviceLabel: "Default Windows output",
@@ -146,6 +179,7 @@ export class ApplicationController implements TuiController {
   }
 
   async initialize(): Promise<void> {
+    await this.recording.initialize();
     const devices = this.audio.listMicrophones();
     const defaultId = this.audio.defaultMicrophoneId();
     this.sources.microphone.deviceId = defaultId ?? devices[0]?.id;
@@ -154,11 +188,18 @@ export class ApplicationController implements TuiController {
     )?.name;
     this.logger.info(`Found ${devices.length} microphone device(s)`, "audio");
     this.emit();
+    void this.refreshPricing().catch((error) => {
+      this.logger.warn(
+        `Pricing reference refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+        "billing",
+      );
+    });
   }
 
   getSnapshot(): TuiSnapshot {
     return {
       running: this.running,
+      sessionPhase: this.aggregateSessionPhase(),
       transitioning: this.transitioning,
       sources: {
         system: this.sourceSnapshot("system", "System audio"),
@@ -170,9 +211,19 @@ export class ApplicationController implements TuiController {
       sourceLanguage: this.sourceLanguage,
       targetLanguage: this.targetLanguage,
       model: this.model,
-      recording: this.recording.active,
+      recording: this.recording.active(),
+      sessions: {
+        system: this.sourceSessionSnapshot("system"),
+        microphone: this.sourceSessionSnapshot("microphone"),
+      },
+      billing: this.billing.getSnapshot(),
+      notifications: this.notifications,
       reviewerEnabled: this.reviewerEnabled,
+      secondaryTranslationEnabled: this.secondaryTranslationEnabled,
+      terminologyReviewEnabled: this.terminologyReviewEnabled,
+      terminologyReviewModel: this.terminologyReviewModel,
       reviewQueueSize: this.reviewQueueSize,
+      modelHealth: this.modelHealth,
       subtitles: this.subtitles,
       paragraphs: {
         system: groupSubtitleParagraphs(this.subtitles, "system"),
@@ -191,39 +242,52 @@ export class ApplicationController implements TuiController {
   }
 
   async toggleRunning(): Promise<void> {
+    const active = (["system", "microphone"] as const).filter(
+      (sourceId) => this.sessionPhases[sourceId] !== "idle",
+    );
+    if (active.length === 0) {
+      for (const sourceId of this.enabledSources()) {
+        await this.startSession(sourceId);
+      }
+      return;
+    }
+    for (const sourceId of active) {
+      await this.stopSession(sourceId);
+    }
+  }
+
+  async startSession(sourceId: AudioSourceId): Promise<void> {
     return this.withLifecycle(async () => {
+      if (this.sessionPhases[sourceId] !== "idle") {
+        return;
+      }
       this.transitioning = true;
       this.emit();
       try {
-        if (this.running) {
-          await this.stopAllSources();
-          this.running = false;
-          this.logger.info("Capture stopped", "app");
-        } else {
-          const enabled = (["system", "microphone"] as const).filter(
-            (sourceId) => this.sources[sourceId].enabled,
-          );
-          if (enabled.length === 0) {
-            throw new Error("Enable at least one audio source");
-          }
-          await this.asrModels.ensureModels(this.modelOperations.signal);
-          const starts = await Promise.allSettled(
-            enabled.map((sourceId) => this.startSource(sourceId)),
-          );
-          for (const result of starts) {
-            if (result.status === "rejected") {
-              this.logger.error(
-                `Source failed to start: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
-                "audio",
-              );
-            }
-          }
-          this.running = enabled.some((sourceId) => this.audio.isActive(sourceId));
-          if (!this.running) {
-            throw new Error("No selected audio source could be started");
-          }
-          this.logger.info(`Capture started with ${enabled.join(", ")}`, "app");
+        const startsNewBillingWindow = !this.hasActiveSession();
+        this.sources[sourceId].enabled = true;
+        this.resetForNewSession(sourceId);
+        await this.recording.start(sourceId, this.archiveNames[sourceId], {
+          sourceLanguage: this.sourceLanguage,
+          targetLanguage: this.targetLanguage,
+          model: this.model,
+          sourceId,
+        });
+        if (startsNewBillingWindow) {
+          this.billing.startSession();
         }
+        await this.startSource(sourceId);
+        this.running = this.anyAudioActive();
+        if (!this.audio.isActive(sourceId)) {
+          await this.recording.abort(sourceId);
+          throw new Error(`Audio source ${sourceId} could not be started`);
+        }
+        this.sessionPhases[sourceId] = "recording";
+        this.logger.info(`${sourceId} session started`, "app");
+      } catch (error) {
+        this.sessionPhases[sourceId] = "idle";
+        this.running = this.anyAudioActive();
+        throw error;
       } finally {
         this.transitioning = false;
         this.emit();
@@ -232,22 +296,104 @@ export class ApplicationController implements TuiController {
   }
 
   async setRunning(enabled: boolean): Promise<void> {
-    if (this.running !== enabled) {
-      await this.toggleRunning();
+    if (enabled) {
+      for (const sourceId of this.enabledSources()) {
+        if (this.sessionPhases[sourceId] === "idle") {
+          await this.startSession(sourceId);
+        } else if (this.sessionPhases[sourceId] === "paused") {
+          await this.resumeSession(sourceId);
+        }
+      }
+    } else {
+      for (const sourceId of ["system", "microphone"] as const) {
+        if (this.sessionPhases[sourceId] === "recording") {
+          await this.pauseSession(sourceId);
+        }
+      }
     }
+  }
+
+  async pauseSession(sourceId: AudioSourceId): Promise<void> {
+    return this.withLifecycle(async () => {
+      if (this.sessionPhases[sourceId] !== "recording") {
+        return;
+      }
+      this.transitioning = true;
+      this.emit();
+      try {
+        await this.stopSource(sourceId);
+        this.running = this.anyAudioActive();
+        this.sessionPhases[sourceId] = "paused";
+        this.sources[sourceId].phase = "paused";
+        this.logger.info(`${sourceId} session paused`, "app");
+      } finally {
+        this.transitioning = false;
+        this.emit();
+      }
+    });
+  }
+
+  async resumeSession(sourceId: AudioSourceId): Promise<void> {
+    return this.withLifecycle(async () => {
+      if (this.sessionPhases[sourceId] !== "paused") {
+        return;
+      }
+      this.transitioning = true;
+      this.emit();
+      try {
+        await this.startSource(sourceId);
+        this.running = this.anyAudioActive();
+        if (!this.audio.isActive(sourceId)) {
+          throw new Error(`Audio source ${sourceId} could not be resumed`);
+        }
+        this.sessionPhases[sourceId] = "recording";
+        this.logger.info(`${sourceId} session resumed`, "app");
+      } finally {
+        this.transitioning = false;
+        this.emit();
+      }
+    });
+  }
+
+  async stopSession(sourceId: AudioSourceId): Promise<void> {
+    return this.withLifecycle(async () => {
+      if (this.sessionPhases[sourceId] === "idle" || this.sessionPhases[sourceId] === "saving") {
+        return;
+      }
+      this.transitioning = true;
+      this.sessionPhases[sourceId] = "saving";
+      this.emit();
+      try {
+        await this.stopSource(sourceId);
+        this.running = this.anyAudioActive();
+        await this.drainProcessing(sourceId);
+        const archive = await this.recording.stop(sourceId);
+        if (archive) {
+          this.archiveNames[sourceId] = createDefaultArchiveName();
+          this.pushNotification("success", `${sourceLabel(sourceId)}已自动保存：${archive.name}`);
+          this.logger.info(`Session archived to ${archive.audioDirectory}`, "recording");
+        }
+      } finally {
+        this.sessionPhases[sourceId] = "idle";
+        this.transitioning = false;
+        this.emit();
+      }
+    });
   }
 
   async toggleSource(sourceId: AudioSourceId): Promise<void> {
     return this.withLifecycle(async () => {
       const state = this.sources[sourceId];
       state.enabled = !state.enabled;
-      if (this.running) {
+      if (this.sessionPhases[sourceId] === "recording") {
         if (state.enabled) {
           await this.startSource(sourceId);
         } else {
           await this.stopSource(sourceId);
         }
-        this.running = (["system", "microphone"] as const).some((id) => this.audio.isActive(id));
+        this.running = this.anyAudioActive();
+      } else if (this.sessionPhases[sourceId] === "paused") {
+        state.phase = state.enabled ? "paused" : "disabled";
       }
       this.emit();
     });
@@ -307,48 +453,17 @@ export class ApplicationController implements TuiController {
   cycleModel(direction: 1 | -1 = 1): void {
     const models: readonly TuiTranslationModel[] = [
       "hy-mt2-plus",
-      "deepseek-v4-flash",
       "hy-mt2-pro",
     ];
     const index = models.indexOf(this.model);
-    this.model = models[(index + direction + models.length) % models.length] ?? "deepseek-v4-flash";
+    this.model = models[(index + direction + models.length) % models.length] ?? "hy-mt2-plus";
     this.logger.info(`Primary translation model: ${this.model}`, "settings");
     this.emit();
   }
 
-  async toggleRecording(): Promise<void> {
-    return this.withLifecycle(async () => {
-      if (this.recording.active) {
-        const directory = this.recording.directory;
-        await this.recording.stop();
-        this.logger.info(`Recording saved to ${directory ?? "recordings"}`, "recording");
-      } else {
-        const directory = await this.recording.start({
-          sourceLanguage: this.sourceLanguage,
-          targetLanguage: this.targetLanguage,
-          model: this.model,
-          sources: (["system", "microphone"] as const).filter((id) => this.sources[id].enabled),
-        });
-        this.logger.info(`Recording started: ${directory}`, "recording");
-      }
-      this.emit();
-    });
-  }
-
-  async setRecording(enabled: boolean): Promise<void> {
-    if (this.recording.active !== enabled) {
-      await this.toggleRecording();
-    }
-  }
-
   toggleReviewer(): void {
     this.reviewerEnabled = !this.reviewerEnabled;
-    if (!this.reviewerEnabled) {
-      for (const controller of this.reviewControllers.values()) {
-        controller.abort();
-      }
-    }
-    this.logger.info(`DeepSeek review ${this.reviewerEnabled ? "enabled" : "disabled"}`, "review");
+    this.logger.info(`DeepSeek general review ${this.reviewerEnabled ? "enabled" : "disabled"}`, "review");
     this.emit();
   }
 
@@ -358,11 +473,119 @@ export class ApplicationController implements TuiController {
     }
   }
 
+  toggleSecondaryTranslation(): void {
+    this.secondaryTranslationEnabled = !this.secondaryTranslationEnabled;
+    this.logger.info(
+      `Parallel Hunyuan translation ${this.secondaryTranslationEnabled ? "enabled" : "disabled"}`,
+      "translation",
+    );
+    this.emit();
+  }
+
+  setSecondaryTranslationEnabled(enabled: boolean): void {
+    if (this.secondaryTranslationEnabled !== enabled) {
+      this.toggleSecondaryTranslation();
+    }
+  }
+
+  toggleTerminologyReview(): void {
+    this.terminologyReviewEnabled = !this.terminologyReviewEnabled;
+    this.logger.info(
+      `DeepSeek terminology review ${this.terminologyReviewEnabled ? "enabled" : "disabled"}`,
+      "review",
+    );
+    this.emit();
+  }
+
+  setTerminologyReviewEnabled(enabled: boolean): void {
+    if (this.terminologyReviewEnabled !== enabled) {
+      this.toggleTerminologyReview();
+    }
+  }
+
+  cycleTerminologyReviewModel(direction: 1 | -1 = 1): void {
+    const models: readonly TuiReviewModel[] = ["deepseek-v4-flash", "deepseek-v4-pro"];
+    const index = models.indexOf(this.terminologyReviewModel);
+    this.terminologyReviewModel = models[(index + direction + models.length) % models.length]
+      ?? "deepseek-v4-flash";
+    this.logger.info(`Terminology review model: ${this.terminologyReviewModel}`, "review");
+    this.emit();
+  }
+
+  setTerminologyReviewModel(model: TuiReviewModel): void {
+    if (this.terminologyReviewModel !== model) {
+      this.cycleTerminologyReviewModel(1);
+    }
+  }
+
+  testModels(): void {
+    const models = this.modelHealth.map((item) => item.model);
+    this.modelHealth = models.map((model) => ({ model, status: "testing" }));
+    this.emit();
+    void Promise.all(models.map(async (model) => {
+      if (!this.translator.registry.isConfigured(model)) {
+        this.updateModelHealth(model, { status: "not-configured", checkedAt: new Date().toISOString() });
+        return;
+      }
+      const started = performance.now();
+      try {
+        const result = await this.translator.registry.testModel(model);
+        this.billing.record(result.model, result.usage);
+        this.updateModelHealth(model, {
+          status: "available",
+          latencyMs: performance.now() - started,
+          checkedAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        this.updateModelHealth(model, {
+          status: "unavailable",
+          latencyMs: performance.now() - started,
+          checkedAt: new Date().toISOString(),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }));
+  }
+
+  setArchiveName(sourceId: AudioSourceId, name: string): void {
+    this.archiveNames[sourceId] = this.recording.renameCurrent(sourceId, name);
+    this.emit();
+  }
+
+  async refreshPricing(): Promise<void> {
+    const refresh = this.billing.refreshPricingReference();
+    this.emit();
+    await refresh;
+    this.emit();
+  }
+
+  dismissNotification(id: string): void {
+    this.notifications = this.notifications.filter((notification) => notification.id !== id);
+    this.emit();
+  }
+
+  archiveExportPath(
+    sourceId: AudioSourceId,
+    kind: ArchiveExportKind,
+  ): ReturnType<RecordingManager["exportPath"]> {
+    return this.recording.exportPath(sourceId, kind);
+  }
+
+  notifyExport(destination: string): void {
+    this.pushNotification("success", `已导出到 ${destination}`);
+  }
+
   async shutdown(): Promise<void> {
     if (this.shutdownPromise) {
       return this.shutdownPromise;
     }
     this.closing = true;
+    for (const sourceId of ["system", "microphone"] as const) {
+      if (this.sessionPhases[sourceId] !== "idle") {
+        this.sessionPhases[sourceId] = "saving";
+      }
+    }
+    this.emit();
     this.modelOperations.abort(new Error("Application shutdown"));
     this.shutdownPromise = this.lifecycleTail.catch(() => undefined).then(async () => {
       await this.stopAllSources().catch((error) => {
@@ -372,24 +595,22 @@ export class ApplicationController implements TuiController {
         );
       });
       this.running = false;
-      await Promise.allSettled([...this.translationQueues.values()]);
+      await this.drainProcessing();
       this.translationQueues.clear();
-      await Promise.allSettled([...this.reviewTasks]);
       this.closed = true;
       for (const controller of this.reviewControllers.values()) {
         controller.abort();
       }
       this.reviewControllers.clear();
+      this.reviewTasksBySource.clear();
       for (const controller of this.translationControllers.values()) {
         controller.abort();
       }
       this.translationControllers.clear();
-      await this.recording.stop().catch((error) => {
-        this.logger.error(
-          `Recording shutdown cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
-          "recording",
-        );
-      });
+      await Promise.allSettled((["system", "microphone"] as const).map(async (sourceId) => {
+        await this.recording.stop(sourceId);
+        this.sessionPhases[sourceId] = "idle";
+      }));
       this.logger.info("Application shutdown complete", "app");
       await this.logger.close();
     });
@@ -583,16 +804,19 @@ export class ApplicationController implements TuiController {
       return;
     }
     this.lastTranscripts.set(transcript.sourceId, { text, at: transcript.speechEndedAt });
+    const translationOmitted = isPredominantlyTargetLanguage(text, this.targetLanguage);
     const entry: TuiSubtitleEntry = {
       id: randomUUID(),
       sourceId: transcript.sourceId,
       timestamp: formatLocalTime(transcript.speechStartedAt),
       sourceText: text,
       translation: "",
+      ...(translationOmitted ? { translationOmitted: true } : {}),
       isFinal: true,
     };
     this.subtitles = [...this.subtitles.slice(-99), entry];
     const recordingSessionId = this.recording.sessionIdForSpeech(
+      transcript.sourceId,
       transcript.speechStartedAt,
       transcript.speechEndedAt,
     );
@@ -601,8 +825,23 @@ export class ApplicationController implements TuiController {
       sourceLanguage: this.sourceLanguage,
       targetLanguage: this.targetLanguage,
       model: this.model,
+      secondaryTranslationEnabled: this.secondaryTranslationEnabled,
+      reviewerEnabled: this.reviewerEnabled,
+      terminologyReviewEnabled: this.terminologyReviewEnabled,
+      terminologyReviewModel: this.terminologyReviewModel,
       ...(recordingSessionId ? { recordingSessionId } : {}),
     };
+    void this.appendRecordingTranscript(entry, recordingSessionId);
+    if (translationOmitted) {
+      const contexts = this.contexts.get(entry.sourceId) ?? [];
+      this.contexts.set(entry.sourceId, [
+        ...contexts.slice(-7),
+        { id: entry.id, source: entry.sourceText, translation: entry.sourceText },
+      ]);
+      this.logger.debug("Skipped translation for target-language speech", entry.sourceId);
+      this.emit();
+      return;
+    }
     this.enqueueTranslation(entry, settings);
     this.emit();
   }
@@ -647,91 +886,152 @@ export class ApplicationController implements TuiController {
     };
     const started = performance.now();
     try {
-      const result = await this.translator.translate(request, controller.signal);
-      if (this.closed || settings.revision !== this.settingsRevision) {
-        return;
+      const settle = async (model: TuiTranslationModel) => {
+        try {
+          return { result: await this.translator.translate({ ...request, model }, controller.signal) };
+        } catch (error) {
+          return { error };
+        }
+      };
+      const primaryTask = settle(settings.model);
+      const secondaryTask = settings.secondaryTranslationEnabled
+        ? settle(otherTranslationModel(settings.model))
+        : undefined;
+      const primary = await primaryTask;
+      let initial: TranslationResult | undefined;
+      if (primary.result) {
+        initial = primary.result;
+        this.billing.record(initial.model, initial.usage);
+        await this.commitInitialTranslation(entry, initial, settings, contexts, started);
       }
-      this.sources[entry.sourceId].latencyMs = performance.now() - started;
-      this.updateSubtitle(entry.id, { translation: result.text });
-      const turn: ContextTurn = { id: entry.id, source: entry.sourceText, translation: result.text };
-      this.contexts.set(entry.sourceId, [...contexts.slice(-7), turn]);
-      await this.appendRecordingTranscript(
-        { ...entry, translation: result.text },
-        settings.recordingSessionId,
-      );
-      this.logger.info(`Translated with ${settings.model} in ${Math.round(performance.now() - started)} ms`, entry.sourceId);
-      if (this.reviewerEnabled) {
-        this.startReview(entry, result.text, settings);
+      const secondary = secondaryTask ? await secondaryTask : undefined;
+      if (secondary?.result) {
+        this.billing.record(secondary.result.model, secondary.result.usage);
+      }
+      if (!initial && secondary?.result) {
+        initial = secondary.result;
+        await this.commitInitialTranslation(entry, initial, settings, contexts, started);
+      }
+      if (!initial) {
+        throw new AggregateError(
+          [primary.error, secondary?.error].filter((error) => error !== undefined),
+          "All enabled translation models failed",
+        );
+      }
+      if (this.closed || settings.revision !== this.settingsRevision) return;
+      if (settings.reviewerEnabled || settings.terminologyReviewEnabled) {
+        this.startReview(entry, initial.text, secondary?.result?.text, settings);
       }
     } finally {
       this.translationControllers.delete(entry.id);
     }
   }
 
+  private async commitInitialTranslation(
+    entry: TuiSubtitleEntry,
+    result: TranslationResult,
+    settings: TranslationJobSettings,
+    contexts: readonly ContextTurn[],
+    started: number,
+  ): Promise<void> {
+    if (this.closed || settings.revision !== this.settingsRevision) return;
+    this.sources[entry.sourceId].latencyMs = performance.now() - started;
+    this.updateSubtitle(entry.id, { translation: result.text });
+    const turn: ContextTurn = { id: entry.id, source: entry.sourceText, translation: result.text };
+    this.contexts.set(entry.sourceId, [...contexts.slice(-7), turn]);
+    await this.appendRecordingTranscript(
+      { ...entry, translation: result.text },
+      settings.recordingSessionId,
+    );
+    this.logger.info(`Translated with ${result.model} in ${Math.round(performance.now() - started)} ms`, entry.sourceId);
+  }
+
   private startReview(
     entry: TuiSubtitleEntry,
     originalTranslation: string,
+    secondaryTranslation: string | undefined,
     settings: TranslationJobSettings,
   ): void {
     const controller = new AbortController();
     this.reviewControllers.set(entry.id, controller);
+    const sourceTasks = this.reviewTasksBySource.get(entry.sourceId) ?? new Set<Promise<void>>();
+    this.reviewTasksBySource.set(entry.sourceId, sourceTasks);
     this.reviewQueueSize += 1;
     this.emit();
     const context = (this.contexts.get(entry.sourceId) ?? [])
       .filter((turn) => turn.id !== entry.id)
       .slice(-4)
       .map((turn) => ({ source: turn.source, translation: turn.translation }));
-    const task = this.translator
-      .reviewTranslation(
-        {
-          sourceText: entry.sourceText,
-          originalTranslation,
-          sourceLanguage: settings.sourceLanguage,
-          targetLanguage: settings.targetLanguage,
-          context,
-        },
-        controller.signal,
-      )
-      .then(async (review) => {
-        if (this.closed || settings.revision !== this.settingsRevision) {
-          return;
+    const task = (async () => {
+      let reviewedTranslation = originalTranslation;
+      const runReview = async (
+        mode: "general" | "terminology",
+        model: TuiReviewModel,
+        alternate?: string,
+      ): Promise<void> => {
+        try {
+          const review = await this.translator.reviewTranslation({
+            sourceText: entry.sourceText,
+            originalTranslation: reviewedTranslation,
+            sourceLanguage: settings.sourceLanguage,
+            targetLanguage: settings.targetLanguage,
+            context,
+            mode,
+            model,
+            ...(alternate && alternate !== reviewedTranslation
+              ? { secondaryTranslation: alternate }
+              : {}),
+          }, controller.signal);
+          this.billing.record(review.model, review.usage);
+          reviewedTranslation = review.reviewedTranslation;
+        } catch (error) {
+          if (!controller.signal.aborted) {
+            this.logger.warn(
+              `${model} ${mode} review failed: ${error instanceof Error ? error.message : String(error)}`,
+              entry.sourceId,
+            );
+          }
         }
-        if (!review.corrected) {
-          this.logger.debug("DeepSeek review accepted original translation", entry.sourceId);
-          return;
-        }
-        this.updateSubtitle(entry.id, { revisedTranslation: review.reviewedTranslation });
-        const turn = (this.contexts.get(entry.sourceId) ?? []).find((item) => item.id === entry.id);
-        if (turn) {
-          turn.translation = review.reviewedTranslation;
-        }
-        await this.appendRecordingTranscript(
-          {
-            ...entry,
-            translation: originalTranslation,
-            revisedTranslation: review.reviewedTranslation,
-          },
-          settings.recordingSessionId,
-        );
-        this.logger.info("DeepSeek review produced one delayed revision", entry.sourceId);
-      })
-      .catch((error) => {
-        if (!controller.signal.aborted) {
-          this.logger.warn(
-            `DeepSeek review failed: ${error instanceof Error ? error.message : String(error)}`,
-            entry.sourceId,
-          );
-        }
-      })
+      };
+
+      if (settings.reviewerEnabled) {
+        await runReview("general", "deepseek-v4-flash", secondaryTranslation);
+      }
+      if (settings.terminologyReviewEnabled) {
+        await runReview("terminology", settings.terminologyReviewModel);
+      }
+      if (
+        this.closed
+        || settings.revision !== this.settingsRevision
+        || reviewedTranslation.trim() === originalTranslation.trim()
+      ) {
+        return;
+      }
+      this.updateSubtitle(entry.id, { revisedTranslation: reviewedTranslation });
+      const turn = (this.contexts.get(entry.sourceId) ?? []).find((item) => item.id === entry.id);
+      if (turn) {
+        turn.translation = reviewedTranslation;
+      }
+      await this.appendRecordingTranscript(
+        { ...entry, translation: originalTranslation, revisedTranslation: reviewedTranslation },
+        settings.recordingSessionId,
+      );
+      this.logger.info("DeepSeek review produced one delayed revision", entry.sourceId);
+    })()
       .finally(() => {
         this.reviewControllers.delete(entry.id);
         this.reviewTasks.delete(task);
+        sourceTasks.delete(task);
+        if (sourceTasks.size === 0) {
+          this.reviewTasksBySource.delete(entry.sourceId);
+        }
         this.reviewQueueSize = Math.max(0, this.reviewQueueSize - 1);
         if (!this.closed) {
           this.emit();
         }
       });
     this.reviewTasks.add(task);
+    sourceTasks.add(task);
     void task;
   }
 
@@ -784,7 +1084,7 @@ export class ApplicationController implements TuiController {
       const state = this.sources[sourceId];
       state.phase = "error";
       state.error = error.message;
-      this.running = (["system", "microphone"] as const).some((id) => this.audio.isActive(id));
+      this.running = this.anyAudioActive();
       this.logger.error(error.message, `asr:${sourceId}`);
       this.emit();
     }).catch(() => undefined);
@@ -836,7 +1136,7 @@ export class ApplicationController implements TuiController {
       const state = this.sources[sourceId];
       state.phase = "error";
       state.error = error instanceof Error ? error.message : String(error);
-      this.running = (["system", "microphone"] as const).some((id) => this.audio.isActive(id));
+      this.running = this.anyAudioActive();
       throw error;
     }
   }
@@ -850,6 +1150,84 @@ export class ApplicationController implements TuiController {
         this.handleTranscript(transcript);
       }
     });
+  }
+
+  private enabledSources(): AudioSourceId[] {
+    return (["system", "microphone"] as const).filter((sourceId) => this.sources[sourceId].enabled);
+  }
+
+  private resetForNewSession(sourceId: AudioSourceId): void {
+    this.subtitles = this.subtitles.filter((entry) => entry.sourceId !== sourceId);
+    this.contexts.delete(sourceId);
+    this.lastTranscripts.delete(sourceId);
+  }
+
+  private async drainProcessing(sourceId?: AudioSourceId): Promise<void> {
+    if (sourceId) {
+      while (this.translationQueues.has(sourceId)) {
+        const task = this.translationQueues.get(sourceId);
+        if (task) await Promise.allSettled([task]);
+      }
+      const reviews = this.reviewTasksBySource.get(sourceId);
+      while (reviews && reviews.size > 0) {
+        await Promise.allSettled([...reviews]);
+      }
+      return;
+    }
+    while (this.translationQueues.size > 0) {
+      await Promise.allSettled([...this.translationQueues.values()]);
+    }
+    while (this.reviewTasks.size > 0) {
+      await Promise.allSettled([...this.reviewTasks]);
+    }
+  }
+
+  private pushNotification(kind: TuiNotification["kind"], message: string): void {
+    this.notifications = [
+      ...this.notifications.slice(-7),
+      { id: randomUUID(), kind, message },
+    ];
+    this.emit();
+  }
+
+  private updateModelHealth(
+    model: ProviderModelId,
+    update: Omit<TuiModelHealth, "model">,
+  ): void {
+    this.modelHealth = this.modelHealth.map((item) =>
+      item.model === model ? { model, ...update } : item);
+    this.emit();
+  }
+
+  private hasActiveSession(): boolean {
+    return (["system", "microphone"] as const).some(
+      (sourceId) => this.sessionPhases[sourceId] !== "idle",
+    );
+  }
+
+  private anyAudioActive(): boolean {
+    return (["system", "microphone"] as const).some((sourceId) => this.audio.isActive(sourceId));
+  }
+
+  private aggregateSessionPhase(): TuiSessionPhase {
+    const phases = Object.values(this.sessionPhases);
+    if (phases.includes("saving")) return "saving";
+    if (phases.includes("recording")) return "recording";
+    if (phases.includes("paused")) return "paused";
+    return "idle";
+  }
+
+  private sourceSessionSnapshot(sourceId: AudioSourceId): TuiSnapshot["sessions"][AudioSourceId] {
+    const lastSaved = this.recording.lastSaved(sourceId);
+    return {
+      phase: this.sessionPhases[sourceId],
+      recording: this.recording.active(sourceId),
+      archive: {
+        rootDirectory: this.recording.archiveRoot,
+        currentName: this.archiveNames[sourceId],
+        ...(lastSaved ? { lastSaved } : {}),
+      },
+    };
   }
 
   private resetLanguageState(): void {
@@ -965,4 +1343,28 @@ function groupSubtitleParagraphs(
 function timeOfDaySeconds(timestamp: string): number {
   const [hours = 0, minutes = 0, seconds = 0] = timestamp.split(":").map(Number);
   return hours * 3600 + minutes * 60 + seconds;
+}
+
+function otherTranslationModel(model: TuiTranslationModel): TuiTranslationModel {
+  return model === "hy-mt2-plus" ? "hy-mt2-pro" : "hy-mt2-plus";
+}
+
+function sourceLabel(sourceId: AudioSourceId): string {
+  return sourceId === "system" ? "电脑声音" : "麦克风";
+}
+
+function isPredominantlyTargetLanguage(text: string, targetLanguage: string): boolean {
+  const compact = text.replace(/[\s\p{P}\p{S}\d]+/gu, "");
+  if (compact.length < 8) {
+    return false;
+  }
+  const patterns: Readonly<Record<string, RegExp>> = {
+    zh: /\p{Script=Han}/gu,
+    ja: /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu,
+    ko: /\p{Script=Hangul}/gu,
+    en: /[A-Za-z]/gu,
+  };
+  const language = targetLanguage.toLowerCase().split("-")[0] ?? targetLanguage;
+  const matching = compact.match(patterns[language] ?? /$a/gu)?.length ?? 0;
+  return matching >= 8 && matching / compact.length >= 0.65;
 }

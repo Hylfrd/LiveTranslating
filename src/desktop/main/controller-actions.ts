@@ -1,5 +1,5 @@
 import type { ApplicationController } from "../../app/application-controller.js";
-import type { TuiSnapshot, TuiTranslationModel } from "../../tui/controller.js";
+import type { TuiReviewModel, TuiSnapshot, TuiTranslationModel } from "../../tui/controller.js";
 import type {
   DesktopActionName,
   DesktopActionRequest,
@@ -8,6 +8,10 @@ import type {
 const ACTION_NAMES = new Set<DesktopActionName>([
   "toggle-running",
   "set-running",
+  "start-session",
+  "pause-session",
+  "resume-session",
+  "stop-session",
   "toggle-source",
   "set-source-enabled",
   "cycle-microphone",
@@ -18,15 +22,19 @@ const ACTION_NAMES = new Set<DesktopActionName>([
   "set-source-language",
   "set-target-language",
   "set-model",
-  "toggle-recording",
-  "set-recording",
   "toggle-reviewer",
   "set-reviewer",
+  "set-secondary-translation",
+  "set-terminology-review",
+  "set-terminology-review-model",
+  "test-models",
+  "set-archive-name",
+  "refresh-pricing",
+  "dismiss-notification",
 ]);
 
 const MODELS: readonly TuiTranslationModel[] = [
   "hy-mt2-plus",
-  "deepseek-v4-flash",
   "hy-mt2-pro",
 ];
 
@@ -42,6 +50,18 @@ export async function dispatchControllerAction(
       break;
     case "set-running":
       await controller.setRunning(readEnabled(request.payload));
+      break;
+    case "start-session":
+      await controller.startSession(readSourceId(request.payload));
+      break;
+    case "pause-session":
+      await controller.pauseSession(readSourceId(request.payload));
+      break;
+    case "resume-session":
+      await controller.resumeSession(readSourceId(request.payload));
+      break;
+    case "stop-session":
+      await controller.stopSession(readSourceId(request.payload));
       break;
     case "toggle-source":
       await controller.toggleSource(readSourceId(request.payload));
@@ -76,17 +96,35 @@ export async function dispatchControllerAction(
     case "set-model":
       await setModel(controller, readString(request.payload, "model"));
       break;
-    case "toggle-recording":
-      await controller.toggleRecording();
-      break;
-    case "set-recording":
-      await controller.setRecording(readEnabled(request.payload));
-      break;
     case "toggle-reviewer":
       controller.toggleReviewer();
       break;
     case "set-reviewer":
       controller.setReviewerEnabled(readEnabled(request.payload));
+      break;
+    case "set-secondary-translation":
+      controller.setSecondaryTranslationEnabled(readEnabled(request.payload));
+      break;
+    case "set-terminology-review":
+      controller.setTerminologyReviewEnabled(readEnabled(request.payload));
+      break;
+    case "set-terminology-review-model":
+      controller.setTerminologyReviewModel(readReviewModel(request.payload));
+      break;
+    case "test-models":
+      controller.testModels();
+      break;
+    case "set-archive-name":
+      controller.setArchiveName(
+        readSourceId(request.payload),
+        readString(request.payload, "name"),
+      );
+      break;
+    case "refresh-pricing":
+      await controller.refreshPricing();
+      break;
+    case "dismiss-notification":
+      controller.dismissNotification(readString(request.payload, "notificationId"));
       break;
   }
 
@@ -129,6 +167,16 @@ function readString(payload: unknown, key: string): string {
     throw new TypeError(`Action requires a non-empty ${key}`);
   }
   return payload[key].trim();
+}
+
+function readReviewModel(payload: unknown): TuiReviewModel {
+  if (
+    !isRecord(payload)
+    || (payload.reviewModel !== "deepseek-v4-flash" && payload.reviewModel !== "deepseek-v4-pro")
+  ) {
+    throw new TypeError("Action requires a valid DeepSeek review model");
+  }
+  return payload.reviewModel;
 }
 
 async function setMicrophone(controller: ApplicationController, deviceId: string): Promise<void> {

@@ -15,11 +15,12 @@ type MenuItemId =
   | "system"
   | "microphone"
   | "device"
-  | "recording"
-  | "sourceLanguage"
   | "targetLanguage"
   | "model"
-  | "reviewer";
+  | "parallel"
+  | "reviewer"
+  | "terminology"
+  | "terminologyModel";
 
 interface MenuItem {
   readonly id: MenuItemId;
@@ -90,9 +91,7 @@ function SourcePanel({ source }: { readonly source: TuiSourceState }) {
 function Header({ snapshot, title }: { readonly snapshot: TuiSnapshot; readonly title: string }) {
   const state = snapshot.transitioning
     ? "CHANGING"
-    : snapshot.running
-      ? "RUNNING"
-      : "STOPPED";
+    : snapshot.sessionPhase.toUpperCase();
   const stateColor = snapshot.transitioning
     ? tuiColors.warning
     : snapshot.running
@@ -130,9 +129,11 @@ function SubtitlePanel({ snapshot }: { readonly snapshot: TuiSnapshot }) {
             <Text wrap="truncate-end">
               {snapshot.sourceLanguage.toUpperCase().padEnd(3)} {entry.sourceText || "..."}
             </Text>
-            <Text color={tuiColors.accent} wrap="truncate-end">
-              {snapshot.targetLanguage.toUpperCase().padEnd(3)} {entry.translation || "..."}
-            </Text>
+            {!entry.translationOmitted ? (
+              <Text color={tuiColors.accent} wrap="truncate-end">
+                {snapshot.targetLanguage.toUpperCase().padEnd(3)} {entry.translation || "..."}
+              </Text>
+            ) : null}
             {entry.revisedTranslation && entry.revisedTranslation !== entry.translation ? (
               <Text color={tuiColors.warning} wrap="truncate-end">
                 REV {entry.revisedTranslation}
@@ -200,21 +201,12 @@ export function TuiApp({ controller, title = "LiveTranslating", onError }: TuiAp
         value: microphone.deviceLabel ?? "No device",
       },
       {
-        id: "recording",
-        label: "Save recording",
-        value: boolLabel(snapshot.recording),
-      },
-      {
-        id: "sourceLanguage",
-        label: "Source language",
-        value: getLanguageLabel(snapshot.sourceLanguages, snapshot.sourceLanguage),
-      },
-      {
         id: "targetLanguage",
         label: "Target language",
         value: getLanguageLabel(snapshot.targetLanguages, snapshot.targetLanguage),
       },
       { id: "model", label: "Primary model", value: snapshot.model },
+      { id: "parallel", label: "Parallel translator", value: boolLabel(snapshot.secondaryTranslationEnabled) },
       {
         id: "reviewer",
         label: "DeepSeek review",
@@ -222,6 +214,8 @@ export function TuiApp({ controller, title = "LiveTranslating", onError }: TuiAp
           ? `ON${snapshot.reviewQueueSize ? ` (${snapshot.reviewQueueSize} queued)` : ""}`
           : "OFF",
       },
+      { id: "terminology", label: "Terminology review", value: boolLabel(snapshot.terminologyReviewEnabled) },
+      { id: "terminologyModel", label: "Terminology model", value: snapshot.terminologyReviewModel },
     ];
   }, [snapshot]);
 
@@ -270,12 +264,6 @@ export function TuiApp({ controller, title = "LiveTranslating", onError }: TuiAp
       case "device":
         runAction(() => controller.cycleMicrophoneDevice(1));
         break;
-      case "recording":
-        runAction(() => controller.toggleRecording());
-        break;
-      case "sourceLanguage":
-        runAction(() => controller.cycleSourceLanguage(1));
-        break;
       case "targetLanguage":
         runAction(() => controller.cycleTargetLanguage(1));
         break;
@@ -284,6 +272,15 @@ export function TuiApp({ controller, title = "LiveTranslating", onError }: TuiAp
         break;
       case "reviewer":
         runAction(() => controller.toggleReviewer());
+        break;
+      case "parallel":
+        runAction(() => controller.toggleSecondaryTranslation());
+        break;
+      case "terminology":
+        runAction(() => controller.toggleTerminologyReview());
+        break;
+      case "terminologyModel":
+        runAction(() => controller.cycleTerminologyReviewModel(1));
         break;
     }
   }, [controller, runAction]);
@@ -320,16 +317,23 @@ export function TuiApp({ controller, title = "LiveTranslating", onError }: TuiAp
     } else if (input === "m") {
       runAction(() => controller.cycleModel(1));
     } else if (input === "l") {
-      const selected = menuItems[selection];
-      if (selected?.id === "sourceLanguage") {
-        runAction(() => controller.cycleSourceLanguage(1));
-      } else {
-        runAction(() => controller.cycleTargetLanguage(1));
-      }
-    } else if (input === "r") {
-      runAction(() => controller.toggleRecording());
+      runAction(() => controller.cycleTargetLanguage(1));
+    } else if (input === "p") {
+      runAction(async () => {
+        for (const sourceId of ["system", "microphone"] as const) {
+          if (snapshot.sessions[sourceId].phase === "paused") {
+            await controller.resumeSession(sourceId);
+          } else if (snapshot.sessions[sourceId].phase === "recording") {
+            await controller.pauseSession(sourceId);
+          }
+        }
+      });
+    } else if (input === "x") {
+      runAction(() => controller.toggleSecondaryTranslation());
     } else if (input === "v") {
       runAction(() => controller.toggleReviewer());
+    } else if (input === "t") {
+      runAction(() => controller.toggleTerminologyReview());
     }
   });
 
@@ -382,7 +386,7 @@ export function TuiApp({ controller, title = "LiveTranslating", onError }: TuiAp
       <LogPanel snapshot={snapshot} limit={logLimit} />
 
       <Text color={tuiColors.dim} wrap="truncate-end">
-        Up/Down or j/k select  Space toggle  Enter start/stop  d device  m model  l language  r record  v review  q quit
+        Up/Down or j/k select  Space toggle  Enter start/stop  p pause/resume  x parallel  v review  t terms  q quit
       </Text>
     </Box>
   );

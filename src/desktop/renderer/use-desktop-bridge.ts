@@ -4,8 +4,11 @@ import type { TuiSnapshot } from "../../tui/controller.js";
 import type {
   DesktopActionName,
   DesktopActionPayload,
+  DesktopExportKind,
+  DesktopExportResult,
   WindowControlCommand,
 } from "./types.js";
+import type { TuiSourceId } from "../../tui/controller.js";
 
 export interface DesktopBridgeState {
   readonly snapshot: TuiSnapshot | undefined;
@@ -14,6 +17,7 @@ export interface DesktopBridgeState {
   readonly error: string | undefined;
   readonly connected: boolean;
   invoke(name: DesktopActionName, payload?: DesktopActionPayload): Promise<void>;
+  exportArchive(sourceId: TuiSourceId, kind: DesktopExportKind): Promise<DesktopExportResult | undefined>;
   controlWindow(command: WindowControlCommand): Promise<void>;
   clearError(): void;
   reconnect(): void;
@@ -101,6 +105,25 @@ export function useDesktopBridge(): DesktopBridgeState {
     }
   }, [bridge]);
 
+  const exportArchive = useCallback(async (sourceId: TuiSourceId, kind: DesktopExportKind) => {
+    if (!bridge) {
+      setError("桌面桥接未连接，无法导出文件。");
+      return undefined;
+    }
+    setPendingAction(`export-${sourceId}-${kind}`);
+    setError(undefined);
+    try {
+      return await bridge.exportArchive(sourceId, kind);
+    } catch (reason) {
+      setError(`导出失败：${toMessage(reason)}`);
+      return undefined;
+    } finally {
+      if (mounted.current) {
+        setPendingAction(undefined);
+      }
+    }
+  }, [bridge]);
+
   return {
     snapshot,
     loading,
@@ -108,6 +131,7 @@ export function useDesktopBridge(): DesktopBridgeState {
     error,
     connected: Boolean(bridge),
     invoke,
+    exportArchive,
     controlWindow,
     clearError: () => setError(undefined),
     reconnect: () => setConnectionRevision((value) => value + 1),

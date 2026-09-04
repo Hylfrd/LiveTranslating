@@ -12,9 +12,12 @@ colors:
   rule-strong: "#cbd1d2"
   listening-teal: "#087f78"
   listening-teal-dark: "#076760"
+  listening-teal-light: "#17a099"
   error-red: "#b93734"
   warning-amber: "#8c6517"
   focus-blue: "#0b70c9"
+  progress-blue: "#4f8ccb"
+  control-hover: "#9da7a8"
   compact-surface: "rgb(226 229 231 / 92%)"
 typography:
   title:
@@ -41,8 +44,17 @@ typography:
     fontWeight: 600
     lineHeight: 1.45
     letterSpacing: "0"
+  compact:
+    fontFamily: "Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, sans-serif"
+    fontSize: "13px"
+    fontWeight: 600
+    lineHeight: 1.45
+    letterSpacing: "0"
 rounded:
+  meter: "1px"
+  compact: "4px"
   control: "5px"
+  feedback: "6px"
   surface: "7px"
   status: "999px"
 spacing:
@@ -56,8 +68,9 @@ components:
     backgroundColor: "{colors.listening-teal}"
     textColor: "{colors.surface}"
     rounded: "{rounded.control}"
-    padding: "0 12px"
-    height: "37px"
+    size: "36px"
+    height: "36px"
+    width: "36px"
   button-secondary:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
@@ -80,7 +93,7 @@ components:
 
 > A quiet, ruled Windows workspace where live translation owns the reading field and operational controls stay compact, factual, and close to native desktop expectations.
 
-The interface uses a fixed navigation rail, a slim source-health header, and an unframed transcript field. This structure is established in [App.tsx](src/desktop/renderer/App.tsx) and [styles.css](src/desktop/renderer/styles.css); it is deliberately closer to a working interpreter console than a card dashboard.
+The interface uses a fixed navigation rail, a 72px source transport header, an unframed transcript field, and a collapsible archive rail. This structure is established in [App.tsx](src/desktop/renderer/App.tsx) and [styles.css](src/desktop/renderer/styles.css); it is deliberately closer to a working interpreter console than a card dashboard.
 
 The compact window preserves the same hierarchy at smaller scale: subdued source text, strong translated text, and Windows-style controls. Its implementation lives in [OverlayApp.tsx](src/desktop/renderer/OverlayApp.tsx).
 
@@ -89,6 +102,7 @@ The compact window preserves the same hierarchy at smaller scale: subdued source
 - White and cool-gray work surfaces with near-black text.
 - Listening teal is reserved for active state and primary action.
 - Bilingual paragraphs, not isolated translation cards, are the main content unit.
+- Each source page owns its transport and archive controls; the two sources never share panel state.
 - Borders establish structure; shadows are reserved for transient or detached surfaces.
 
 ## Colors
@@ -113,9 +127,9 @@ The application uses the Windows-native Segoe UI Variable stack, with Microsoft 
 
 ## Layout
 
-The large window is a two-column grid: a 224px sidebar and a fluid content field. At 1040px the sidebar contracts to 190px; at 760px it becomes a 72px icon rail. These breakpoints and dimensions are defined in [styles.css](src/desktop/renderer/styles.css).
+The large window is a two-column grid: a 224px sidebar and a fluid content field. Source pages divide the fluid field into a transcript and a 300px archive rail, which can collapse to 48px. At 1040px the sidebar contracts to 190px and the archive rail to 270px; at 760px navigation becomes a 72px icon rail. These breakpoints and dimensions are defined in [styles.css](src/desktop/renderer/styles.css).
 
-Each source owns a separate page and a separate subtitle flow. The header contains identity, device, level, latency, dropped frames, and the source toggle. Paragraph content is centered to 900px with a maximum text measure of 74 characters. Settings use one unframed 920px sheet with ruled sections.
+Each source owns a separate page, session lifecycle, subtitle flow, and archive panel. The 72px header contains identity, device, level, latency, dropped frames, and play/pause/stop transport. Paragraph content is centered to 820px with a maximum text measure of 74 characters. Settings use one unframed 960px sheet with ruled sections.
 
 The compact surface is designed for a 760x320 window. Its 34px custom title bar remains fixed above a scrolling subtitle stack that keeps the latest three entries at the bottom.
 
@@ -131,11 +145,13 @@ Controls use restrained 5px corners, small identity surfaces use 7px corners, an
 
 ## Components
 
-Buttons and fields use stable heights so status changes do not shift layout. The primary run command uses listening teal; secondary commands stay white with a cool rule. Icon-only controls use Lucide icons and always expose `aria-label` and `title` through [ui.tsx](src/desktop/renderer/ui.tsx).
+Buttons and fields use stable heights so status changes do not shift layout. The 36px play command uses listening teal; pause and stop replace it without resizing the header. Secondary commands stay white with a cool rule. Icon-only controls use Lucide icons and always expose `aria-label` and `title` through [ui.tsx](src/desktop/renderer/ui.tsx).
 
 Navigation is a dense vertical list with a dark active row, muted inactive rows, and one 7px semantic status dot per source. Toggles use a 38x22px track, a 16px white thumb, and semantic `role="switch"` state.
 
 Transcript paragraphs are unframed. Timestamp and review state form a 12px metadata row, followed by muted source text and the larger translation. Toasts are the only in-app error prompt and leave via transform and opacity without reflowing the page.
+
+The source archive rail is a full-height utility surface rather than a floating card. It provides one filename field, current session state, three file outcomes, recent archive metadata, and three export commands; collapsing it leaves a 48px reopen rail.
 
 ## Do's and Don'ts
 
@@ -143,12 +159,13 @@ Transcript paragraphs are unframed. Timestamp and review state form a 12px metad
 
 - **Do** keep computer audio and microphone content on independent pages.
 - **Do** group committed sentences into continuous bilingual paragraphs.
+- **Do** keep play/pause/stop and archive state independent for each source page.
 - **Do** keep operational metadata at 12px or larger and use tabular numerals for time and latency.
 - **Do** use Lucide icons, visible keyboard focus, high-contrast states, and reduced-motion fallbacks.
 
 ### Don't
 
-- **Don't** add a right-side dashboard, top command banner, or nested card grid.
+- **Don't** turn the source archive rail into a dashboard or nested card grid.
 - **Don't** split the transcript into "current" and "history" visual tiers.
 - **Don't** fade older compact subtitles with parent opacity.
 - **Don't** use accent colors without a capture, health, recording, warning, error, or focus meaning.
@@ -157,7 +174,8 @@ Transcript paragraphs are unframed. Timestamp and review state form a 12px metad
 
 - [ ] One active source page fills the content surface; the other source is reachable from the sidebar.
 - [ ] Translation remains the largest content text and wraps without overlap.
-- [ ] Start/stop and compact-window commands remain visible in the sidebar action area.
+- [ ] The source header shows only play while idle, then pause/resume and stop while active.
+- [ ] The current source's archive rail can collapse and reopen without resizing its controls.
 - [ ] Settings remain a single ruled sheet without a right rail.
 - [ ] All controls have hover, disabled, and focus-visible states.
 - [ ] Motion is disabled or shortened by the existing `prefers-reduced-motion` rule.

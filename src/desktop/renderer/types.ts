@@ -1,5 +1,6 @@
 import type {
   TuiSnapshot,
+  TuiReviewModel,
   TuiSourceId,
   TuiTranslationModel,
 } from "../../tui/controller.js";
@@ -9,6 +10,10 @@ export type DesktopSnapshot = TuiSnapshot;
 export type DesktopActionName =
   | "toggle-running"
   | "set-running"
+  | "start-session"
+  | "pause-session"
+  | "resume-session"
+  | "stop-session"
   | "toggle-source"
   | "set-source-enabled"
   | "cycle-microphone"
@@ -19,19 +24,36 @@ export type DesktopActionName =
   | "set-source-language"
   | "set-target-language"
   | "set-model"
-  | "toggle-recording"
-  | "set-recording"
   | "toggle-reviewer"
-  | "set-reviewer";
+  | "set-reviewer"
+  | "set-secondary-translation"
+  | "set-terminology-review"
+  | "set-terminology-review-model"
+  | "test-models"
+  | "set-archive-name"
+  | "refresh-pricing"
+  | "dismiss-notification";
 
 export type DesktopActionPayload =
   | { readonly sourceId: TuiSourceId }
   | { readonly sourceId: TuiSourceId; readonly enabled: boolean }
+  | { readonly sourceId: TuiSourceId; readonly name: string }
   | { readonly enabled: boolean }
   | { readonly direction?: 1 | -1 }
   | { readonly deviceId: string }
   | { readonly language: string }
-  | { readonly model: TuiTranslationModel };
+  | { readonly model: TuiTranslationModel }
+  | { readonly reviewModel: TuiReviewModel }
+  | { readonly name: string }
+  | { readonly notificationId: string };
+
+export type DesktopExportKind = "audio" | "transcription" | "translation";
+
+export interface DesktopExportResult {
+  readonly canceled: boolean;
+  readonly kind: DesktopExportKind;
+  readonly destination?: string;
+}
 
 export type WindowControlCommand =
   | "open-overlay"
@@ -44,6 +66,7 @@ export interface LiveTranslatingBridge {
   onSnapshot(listener: (snapshot: DesktopSnapshot) => void): () => void;
   action(name: DesktopActionName, payload?: DesktopActionPayload): Promise<DesktopSnapshot>;
   windowControl(command: WindowControlCommand): Promise<void>;
+  exportArchive(sourceId: TuiSourceId, kind: DesktopExportKind): Promise<DesktopExportResult>;
 }
 
 declare global {

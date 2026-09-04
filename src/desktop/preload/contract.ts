@@ -1,5 +1,6 @@
 import type {
   TuiSnapshot,
+  TuiReviewModel,
   TuiSourceId,
   TuiTranslationModel,
 } from "../../tui/controller.js";
@@ -7,6 +8,10 @@ import type {
 export type DesktopActionName =
   | "toggle-running"
   | "set-running"
+  | "start-session"
+  | "pause-session"
+  | "resume-session"
+  | "stop-session"
   | "toggle-source"
   | "set-source-enabled"
   | "cycle-microphone"
@@ -17,19 +22,36 @@ export type DesktopActionName =
   | "set-source-language"
   | "set-target-language"
   | "set-model"
-  | "toggle-recording"
-  | "set-recording"
   | "toggle-reviewer"
-  | "set-reviewer";
+  | "set-reviewer"
+  | "set-secondary-translation"
+  | "set-terminology-review"
+  | "set-terminology-review-model"
+  | "test-models"
+  | "set-archive-name"
+  | "refresh-pricing"
+  | "dismiss-notification";
 
 export type DesktopActionPayload =
   | { readonly sourceId: TuiSourceId }
   | { readonly sourceId: TuiSourceId; readonly enabled: boolean }
+  | { readonly sourceId: TuiSourceId; readonly name: string }
   | { readonly enabled: boolean }
   | { readonly direction?: 1 | -1 }
   | { readonly deviceId: string }
   | { readonly language: string }
-  | { readonly model: TuiTranslationModel };
+  | { readonly model: TuiTranslationModel }
+  | { readonly reviewModel: TuiReviewModel }
+  | { readonly name: string }
+  | { readonly notificationId: string };
+
+export type DesktopExportKind = "audio" | "transcription" | "translation";
+
+export interface DesktopExportResult {
+  readonly canceled: boolean;
+  readonly kind: DesktopExportKind;
+  readonly destination?: string;
+}
 
 export interface DesktopActionRequest {
   readonly name: DesktopActionName;
@@ -47,6 +69,7 @@ export interface DesktopBridge {
   onSnapshot(listener: (snapshot: TuiSnapshot) => void): () => void;
   action(name: DesktopActionName, payload?: DesktopActionPayload): Promise<TuiSnapshot>;
   windowControl(command: DesktopWindowCommand): Promise<void>;
+  exportArchive(sourceId: TuiSourceId, kind: DesktopExportKind): Promise<DesktopExportResult>;
 
   /** Compatibility aliases for early renderer prototypes. */
   invoke(request: DesktopActionRequest): Promise<TuiSnapshot>;

@@ -91,6 +91,8 @@ try {
             originalTranslation: result.text,
             sourceLanguage: "en",
             targetLanguage: "zh",
+            mode: "general",
+            model: "deepseek-v4-flash",
             context: reviewContext,
           })
           .then((reviewResult) => {

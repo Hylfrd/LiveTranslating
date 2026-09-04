@@ -20,9 +20,10 @@ translation with domain terminology preserved.
 
 ## Product Purpose
 
-LiveTranslating captures Windows system audio or a selected microphone,
-transcribes speech locally, translates committed sentences, optionally reviews
-them asynchronously, and preserves recordings and structured session output.
+LiveTranslating captures Windows system audio or a selected microphone in
+independent sessions, transcribes mixed-language speech locally, translates only
+the parts not already in the target language, optionally reviews them
+asynchronously, and preserves per-source archives and usage estimates.
 Success means translated lecture speech is readable within a few seconds without
 interrupting the source application.
 
@@ -46,8 +47,13 @@ context, and delayed revision state consistent across all surfaces.
 - Preserve the existing Node.js backend and Ink TUI.
 - Add a large white desktop control window and a compact translucent-gray subtitle window.
 - Keep system audio and microphone independently selectable and concurrently usable.
-- Expose microphone device, recording, languages, translation model, delayed
-  contextual terminology review, source health, continuous subtitle paragraphs, and structured logs.
+- Expose microphone device, target language, Hy-MT2 translation model, parallel
+  translation, two-stage DeepSeek review, model health, token/cost estimates,
+  continuous subtitle paragraphs, per-source archives, exports, and structured logs.
+- Each source page owns independent play, pause, stop, naming, automatic save,
+  recent archive, and export state while sharing the same archive directories.
+- Suppress duplicate target-language output when a committed source paragraph is
+  already predominantly in the target language.
 - Do not maintain a runtime glossary or persist terminology inferred by a model.
 - The compact window has only an expand control at top left and custom minimize and
   close controls at top right.
@@ -63,7 +69,7 @@ context, and delayed revision state consistent across all surfaces.
 - Product name: LiveTranslating.
 - Quiet, work-focused behavior suitable beside dense lecture material.
 - Main workspace uses a white ground; compact subtitles use a slightly translucent gray ground.
-- No existing logo or brand artwork is authoritative.
+- The raster assets under `assets/icon.*` are the authoritative application icon.
 
 ## Evidence on Hand
 

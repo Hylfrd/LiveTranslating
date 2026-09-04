@@ -5,14 +5,17 @@ import type {
   DesktopActionPayload,
   DesktopActionRequest,
   DesktopBridge,
+  DesktopExportKind,
+  DesktopExportResult,
   DesktopWindowCommand,
 } from "./contract.js";
-import type { TuiSnapshot } from "../../tui/controller.js";
+import type { TuiSnapshot, TuiSourceId } from "../../tui/controller.js";
 
 const SNAPSHOT_GET_CHANNEL = "live-translating:snapshot:get";
 const SNAPSHOT_UPDATED_CHANNEL = "live-translating:snapshot:updated";
 const ACTION_CHANNEL = "live-translating:controller:action";
 const WINDOW_CHANNEL = "live-translating:window:control";
+const EXPORT_CHANNEL = "live-translating:archive:export";
 
 const getSnapshot = (): Promise<TuiSnapshot> => ipcRenderer.invoke(SNAPSHOT_GET_CHANNEL);
 
@@ -38,11 +41,17 @@ const action = (
 const windowControl = (command: DesktopWindowCommand): Promise<void> =>
   ipcRenderer.invoke(WINDOW_CHANNEL, command);
 
+const exportArchive = (
+  sourceId: TuiSourceId,
+  kind: DesktopExportKind,
+): Promise<DesktopExportResult> => ipcRenderer.invoke(EXPORT_CHANNEL, { sourceId, kind });
+
 const bridge: DesktopBridge = Object.freeze({
   getSnapshot,
   onSnapshot,
   action,
   windowControl,
+  exportArchive,
   invoke: (request: DesktopActionRequest) => action(request.name, request.payload),
   subscribe: onSnapshot,
   window: Object.freeze({

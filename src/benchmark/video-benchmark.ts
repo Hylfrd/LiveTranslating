@@ -33,7 +33,6 @@ const FRAME_BYTES = FRAME_SAMPLES * Float32Array.BYTES_PER_ELEMENT;
 const MODELS: readonly TranslationModelId[] = [
   "hy-mt2-plus",
   "hy-mt2-pro",
-  "deepseek-v4-flash",
 ];
 
 // Evaluation references are never sent to translation or review models.
@@ -493,6 +492,8 @@ async function reviewHardSegments(
               originalTranslation: candidate.translation ?? "",
               sourceLanguage: "en",
               targetLanguage: "zh",
+              mode: "general",
+              model: "deepseek-v4-flash",
               context: translations
                 .filter(
                   (item) =>

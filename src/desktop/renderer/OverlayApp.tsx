@@ -26,7 +26,9 @@ function SubtitleLine({
         ) : null}
       </div>
       <p lang="en">{entry.sourceText}</p>
-      <strong lang="zh-CN">{(entry.revisedTranslation ?? entry.translation) || "正在翻译…"}</strong>
+      {!entry.translationOmitted ? (
+        <strong lang="zh-CN">{(entry.revisedTranslation ?? entry.translation) || "正在翻译…"}</strong>
+      ) : null}
     </article>
   );
 }

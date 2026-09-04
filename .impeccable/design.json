@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-04T10:54:01.1746174+08:00",
+  "generatedAt": "2026-09-04T15:41:11.2316644+08:00",
   "title": "Design System: LiveTranslating",
   "extensions": {
     "colorMeta": {
@@ -59,9 +59,9 @@
       "name": "Primary Run Button",
       "kind": "button",
       "refersTo": "button-primary",
-      "description": "Starts capture with the listening color and a stable desktop-control height.",
-      "html": "<button class=\"ds-btn-primary\">START LISTENING</button>",
-      "css": ".ds-btn-primary { height: 37px; padding: 0 12px; border: 1px solid var(--teal); border-radius: 5px; color: #fff; background: var(--teal); font: 600 12px 'Segoe UI', sans-serif; transition: background-color 150ms ease, border-color 150ms ease; } .ds-btn-primary:hover { border-color: var(--teal-dark); background: var(--teal-dark); } .ds-btn-primary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }"
+      "description": "Starts a new source-specific session and is replaced by pause and stop controls while active.",
+      "html": "<button class=\"ds-btn-primary\" aria-label=\"Start session\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"m6 3 14 9-14 9z\"/></svg></button>",
+      "css": ".ds-btn-primary { display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border: 1px solid var(--teal); border-radius: 5px; color: #fff; background: var(--teal); transition: background-color 150ms ease, border-color 150ms ease; } .ds-btn-primary svg { width: 17px; fill: none; stroke: currentColor; stroke-width: 2; } .ds-btn-primary:hover { border-color: var(--teal-dark); background: var(--teal-dark); } .ds-btn-primary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }"
     },
     {
       "name": "Secondary Command",
@@ -76,7 +76,7 @@
       "kind": "input",
       "refersTo": "field",
       "description": "Compact labeled field for language and model selection.",
-      "html": "<label class=\"ds-field\"><span>PRIMARY MODEL</span><select><option>DeepSeek V4 Flash</option></select></label>",
+      "html": "<label class=\"ds-field\"><span>TRANSLATION MODEL</span><select><option>Hunyuan MT2 Plus</option></select></label>",
       "css": ".ds-field { display: flex; flex-direction: column; gap: 5px; color: var(--ink-faint); font: 600 12px 'Segoe UI', sans-serif; } .ds-field select { height: 33px; padding: 0 30px 0 10px; border: 1px solid var(--rule-strong); border-radius: 5px; color: var(--ink); background: #fff; font-size: 13px; font-weight: 600; } .ds-field select:hover { border-color: #9da7a8; } .ds-field select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }"
     },
     {
@@ -92,6 +92,13 @@
       "description": "A compact semantic switch for binary capture and review settings.",
       "html": "<button class=\"ds-toggle\" role=\"switch\" aria-checked=\"true\"><span></span></button>",
       "css": ".ds-toggle { position: relative; width: 38px; height: 22px; padding: 0; border: 1px solid var(--teal); border-radius: 999px; background: var(--teal); } .ds-toggle span { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgb(18 29 29 / 24%); transform: translateX(16px); transition: transform 170ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-toggle:hover { border-color: var(--teal-dark); } .ds-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }"
+    },
+    {
+      "name": "Source Archive Rail",
+      "kind": "custom",
+      "description": "A full-height, source-specific save and export surface that collapses to a narrow reopen rail.",
+      "html": "<aside class=\"ds-archive\"><header>SAVE AREA</header><label>SESSION NAME<input value=\"LiveTranslating_2026-9-4_13-38\"></label><button>EXPORT TRANSCRIPT</button></aside>",
+      "css": ".ds-archive { display: flex; width: 300px; min-height: 320px; padding: 16px; flex-direction: column; gap: 16px; border-left: 1px solid var(--rule-strong); color: var(--ink); background: #f5f6f6; font: 600 12px 'Segoe UI', sans-serif; } .ds-archive header { font-size: 14px; } .ds-archive label { display: flex; flex-direction: column; gap: 6px; color: var(--ink-faint); } .ds-archive input, .ds-archive button { height: 34px; padding: 0 9px; border: 1px solid var(--rule-strong); border-radius: 5px; color: var(--ink); background: #fff; } .ds-archive button:hover { border-color: #9da7a8; background: #fafbfb; } .ds-archive input:focus-visible, .ds-archive button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }"
     }
   ],
   "narrative": {
@@ -101,6 +108,7 @@
       "White and cool-gray work surfaces with near-black text.",
       "Listening teal is reserved for active state and primary action.",
       "Bilingual paragraphs, not isolated translation cards, are the main content unit.",
+      "Each source page owns its transport and archive controls; the two sources never share panel state.",
       "Borders establish structure; shadows are reserved for transient or detached surfaces."
     ],
     "rules": [
@@ -112,11 +120,12 @@
     "dos": [
       "Do keep computer audio and microphone content on independent pages.",
       "Do group committed sentences into continuous bilingual paragraphs.",
+      "Do keep play/pause/stop and archive state independent for each source page.",
       "Do keep operational metadata at 12px or larger and use tabular numerals for time and latency.",
       "Do use Lucide icons, visible keyboard focus, high-contrast states, and reduced-motion fallbacks."
     ],
     "donts": [
-      "Don't add a right-side dashboard, top command banner, or nested card grid.",
+      "Don't turn the source archive rail into a dashboard or nested card grid.",
       "Don't split the transcript into current and history visual tiers.",
       "Don't fade older compact subtitles with parent opacity.",
       "Don't use accent colors without a capture, health, recording, warning, error, or focus meaning."

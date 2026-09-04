@@ -32,11 +32,11 @@ export const config = {
   translation: {
     // These compatibility fields keep the current server and health endpoint stable.
     provider: "registry",
-    baseUrl: "https://api.deepseek.com",
-    apiKey: parsed.data.DEEPSEEK_V4_FLASH_API_KEY,
-    model: "deepseek-v4-flash",
-    primaryModel: "deepseek-v4-flash",
-    fallbackModel: "deepseek-v4-flash",
+    baseUrl: "https://tokenhub.tencentmaas.com/v1",
+    apiKey: parsed.data.HY_MT2_PLUS_API_KEY,
+    model: "hy-mt2-plus",
+    primaryModel: "hy-mt2-plus",
+    fallbackModel: "hy-mt2-plus",
     timeoutMs,
     maxOutputTokens,
     providers: {
@@ -63,6 +63,14 @@ export const config = {
         apiKey: parsed.data.DEEPSEEK_V4_FLASH_API_KEY,
         model: "deepseek-v4-flash",
         concurrency: 32,
+      },
+      "deepseek-v4-pro": {
+        id: "deepseek-v4-pro",
+        vendor: "deepseek",
+        baseUrl: "https://api.deepseek.com",
+        apiKey: parsed.data.DEEPSEEK_V4_FLASH_API_KEY,
+        model: "deepseek-v4-pro",
+        concurrency: 16,
       },
     },
   },

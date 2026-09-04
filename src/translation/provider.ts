@@ -1,9 +1,12 @@
 import OpenAI from "openai";
 
 import type { AppConfig } from "../config.js";
+import { estimateTokenUsage } from "../billing/token-estimator.js";
 import { AbortableSemaphore, abortableDelay } from "./concurrency.js";
 import { buildReviewSystemPrompt, buildSystemPrompt } from "./prompts.js";
 import type {
+  ProviderModelId,
+  ReviewModelId,
   TranslationModelId,
   TranslationRequest,
   TranslationResult,
@@ -18,12 +21,12 @@ import {
 } from "./validator.js";
 
 type TranslationSettings = AppConfig["translation"];
-type ProviderSettings = TranslationSettings["providers"][TranslationModelId];
+type ProviderSettings = TranslationSettings["providers"][ProviderModelId];
 type ThinkingMode = "disabled" | "enabled";
 
 export interface TranslationProviderTelemetry {
   readonly type: "rate_limit_retry";
-  readonly model: TranslationModelId;
+  readonly model: ProviderModelId;
   readonly attempt: number;
   readonly delayMs: number;
 }
@@ -104,7 +107,7 @@ function createReviewMessages(
   return [
     {
       role: "system",
-      content: buildReviewSystemPrompt(request.sourceLanguage, request.targetLanguage),
+      content: buildReviewSystemPrompt(request.sourceLanguage, request.targetLanguage, request.mode),
     },
     {
       role: "user",
@@ -112,6 +115,9 @@ function createReviewMessages(
         context ? `Recent context:\n${context}` : "Recent context: (none)",
         `Source text:\n${request.sourceText}`,
         `Candidate translation:\n${request.originalTranslation}`,
+        ...(request.secondaryTranslation
+          ? [`Second translation candidate:\n${request.secondaryTranslation}`]
+          : []),
       ].join("\n\n"),
     },
   ];
@@ -256,7 +262,7 @@ function assertValid(request: TranslationRequest, text: string): void {
 
 class ProviderRuntime {
   readonly configured: boolean;
-  readonly id: TranslationModelId;
+  readonly id: ProviderModelId;
   private readonly client?: OpenAI;
   private readonly semaphore: AbortableSemaphore;
 
@@ -305,12 +311,17 @@ class ProviderRuntime {
             throw new TranslationProviderError("Translation provider returned an empty result");
           }
 
-          const result: TranslationResult = { text };
+          const result: TranslationResult = { text, model: this.id };
           if (completion.usage) {
             result.usage = {
               inputTokens: completion.usage.prompt_tokens,
               outputTokens: completion.usage.completion_tokens,
+              ...(completion.usage.prompt_tokens_details?.cached_tokens === undefined
+                ? {}
+                : { cachedInputTokens: completion.usage.prompt_tokens_details.cached_tokens }),
             };
+          } else {
+            result.usage = await estimateTokenUsage(this.id, JSON.stringify(messages), text);
           }
           return result;
         } finally {
@@ -356,6 +367,9 @@ class ProviderRuntime {
               usage = {
                 inputTokens: chunk.usage.prompt_tokens,
                 outputTokens: chunk.usage.completion_tokens,
+                ...(chunk.usage.prompt_tokens_details?.cached_tokens === undefined
+                  ? {}
+                  : { cachedInputTokens: chunk.usage.prompt_tokens_details.cached_tokens }),
               };
             }
           }
@@ -365,7 +379,11 @@ class ProviderRuntime {
           if (!text) {
             throw new TranslationProviderError("Translation provider returned an empty result");
           }
-          return usage ? { chunks, text, usage } : { chunks, text };
+          return {
+            chunks,
+            text,
+            usage: usage ?? await estimateTokenUsage(this.id, JSON.stringify(messages), text),
+          };
         } finally {
           release();
         }
@@ -435,7 +453,7 @@ class ProviderRuntime {
 export class TranslationProviderRegistry {
   readonly primaryModel: TranslationModelId;
   readonly fallbackModel: TranslationModelId;
-  private readonly runtimes = new Map<TranslationModelId, ProviderRuntime>();
+  private readonly runtimes = new Map<ProviderModelId, ProviderRuntime>();
   private readonly telemetryListeners = new Set<(event: TranslationProviderTelemetry) => void>();
 
   constructor(settings: TranslationSettings) {
@@ -454,11 +472,11 @@ export class TranslationProviderRegistry {
     }
   }
 
-  isConfigured(model: TranslationModelId): boolean {
+  isConfigured(model: ProviderModelId): boolean {
     return this.runtimes.get(model)?.configured ?? false;
   }
 
-  configuredModels(): TranslationModelId[] {
+  configuredModels(): ProviderModelId[] {
     return [...this.runtimes.entries()]
       .filter(([, runtime]) => runtime.configured)
       .map(([model]) => model);
@@ -493,7 +511,7 @@ export class TranslationProviderRegistry {
     request: TranslationReviewRequest,
     signal?: AbortSignal,
   ): Promise<TranslationResult> {
-    return this.runtime("deepseek-v4-flash").complete(
+    return this.runtime(request.model).complete(
       createReviewMessages(request),
       "enabled",
       signal,
@@ -501,7 +519,16 @@ export class TranslationProviderRegistry {
     );
   }
 
-  private runtime(model: TranslationModelId): ProviderRuntime {
+  testModel(model: ProviderModelId, signal?: AbortSignal): Promise<TranslationResult> {
+    return this.runtime(model).complete(
+      [{ role: "user", content: "Translate hello to Simplified Chinese. Return only the translation." }],
+      "disabled",
+      signal,
+      { maxOutputTokens: 16, timeoutMs: 10_000 },
+    );
+  }
+
+  private runtime(model: ProviderModelId): ProviderRuntime {
     const runtime = this.runtimes.get(model);
     if (!runtime) {
       throw new TranslationProviderError(
@@ -537,18 +564,9 @@ export class OpenAICompatibleTranslationProvider {
 
   async translate(request: TranslationRequest, signal?: AbortSignal): Promise<TranslationResult> {
     const selectedModel = request.model ?? this.registry.primaryModel;
-    try {
-      const result = await this.registry.translate(selectedModel, request, signal);
-      assertValid(request, result.text);
-      return result;
-    } catch (error) {
-      if (!this.shouldFallback(selectedModel, error)) {
-        throw error;
-      }
-      const fallback = await this.registry.translate(this.registry.fallbackModel, request, signal);
-      assertValid(request, fallback.text);
-      return fallback;
-    }
+    const result = await this.registry.translate(selectedModel, request, signal);
+    assertValid(request, result.text);
+    return result;
   }
 
   async *translateStream(
@@ -556,22 +574,8 @@ export class OpenAICompatibleTranslationProvider {
     signal?: AbortSignal,
   ): AsyncGenerator<TranslationStreamEvent> {
     const selectedModel = request.model ?? this.registry.primaryModel;
-    let result: BufferedStream;
-
-    try {
-      result = await this.registry.translateStreamBuffered(selectedModel, request, signal);
-      assertValid(request, result.text);
-    } catch (error) {
-      if (!this.shouldFallback(selectedModel, error)) {
-        throw error;
-      }
-      result = await this.registry.translateStreamBuffered(
-        this.registry.fallbackModel,
-        request,
-        signal,
-      );
-      assertValid(request, result.text);
-    }
+    const result = await this.registry.translateStreamBuffered(selectedModel, request, signal);
+    assertValid(request, result.text);
 
     // Results are buffered until validation so fallback text can never be appended
     // to already-emitted invalid text on the existing SSE protocol.
@@ -601,7 +605,7 @@ export class OpenAICompatibleTranslationProvider {
       originalTranslation: request.originalTranslation,
       reviewedTranslation: result.text,
       corrected: request.originalTranslation.trim() !== result.text.trim(),
-      model: "deepseek-v4-flash",
+      model: result.model as ReviewModelId,
     };
     if (result.usage) {
       reviewed.usage = result.usage;
@@ -609,13 +613,4 @@ export class OpenAICompatibleTranslationProvider {
     return reviewed;
   }
 
-  private shouldFallback(model: TranslationModelId, error: unknown): boolean {
-    if (model === this.registry.fallbackModel || !this.registry.isConfigured(this.registry.fallbackModel)) {
-      return false;
-    }
-    return !(
-      error instanceof TranslationProviderError &&
-      error.providerCode === "TRANSLATION_CANCELLED"
-    );
-  }
 }

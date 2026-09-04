@@ -11,8 +11,8 @@ Mode: Operate
 
 Scope: Windows large control window and compact subtitle window.
 
-Audience task: choose one independently processed audio source, read continuous
-bilingual paragraphs, inspect settings and health, then continue in a compact window.
+Audience task: run an independent source session, read continuous bilingual
+paragraphs, name and export its archive, inspect models and cost, then continue in a compact window.
 
 Constraints: Simplified Chinese, TUI preserved, normal non-topmost compact window,
 taskbar presence, custom compact chrome, icon generated separately.
@@ -23,9 +23,9 @@ THESIS: A simultaneous-interpreter desk where translation owns the reading field
 
 OWN-WORLD: White ruled panes, near-black type, neutral grays, listening teal, tally red, compact Windows controls.
 
-STORY: Choose a source page, start capture from the persistent sidebar, read coherent bilingual paragraphs, inspect review or health settings, move into compact view.
+STORY: Choose a source page, start a new session from its aligned transport bar, read coherent paragraphs, inspect or export that source's archive, then configure review and model health separately.
 
-FIRST VIEWPORT: A narrow left navigation and action rail frames one active source; its device and health strip sits above a full-width bilingual paragraph flow. Settings are a separate page, with no right rail or top command row.
+FIRST VIEWPORT: A narrow left navigation rail aligns with a 72px source transport bar; the transcript owns the center and a collapsible, source-specific archive rail owns the right edge. Settings remain a separate full-width page.
 
 FORM: Interpreter desk, first-ranked grounded direction and selected model pick; seed 35e262ce.
 
