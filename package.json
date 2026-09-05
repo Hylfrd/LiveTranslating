@@ -23,6 +23,8 @@
     "tui": "npm run build && node --use-env-proxy --env-file-if-exists=.env dist/cli.js",
     "benchmark:video": "npm run build && node --use-env-proxy --env-file-if-exists=.env dist/benchmark/video-benchmark.js",
     "benchmark:latency": "npm run build && node --use-env-proxy --env-file-if-exists=.env dist/benchmark/realtime-latency.js",
+    "benchmark:cloud-asr": "npm run build:code && node --use-env-proxy --env-file-if-exists=.env dist/benchmark/cloud-asr/cli.js",
+    "benchmark:cloud-asr:selftest": "npm run build:code && node --use-env-proxy dist/benchmark/cloud-asr/selftest.js",
     "smoke": "npm run build && node --use-env-proxy --env-file-if-exists=.env dist/cli.js --smoke",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

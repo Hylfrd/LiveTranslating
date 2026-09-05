@@ -1,0 +1,14 @@
+{
+  "name": "stanford-cs229-lecture-3",
+  "provider": "alibaba-qwen-audio",
+  "input": "C:/path/to/lecture.mkv",
+  "reference": "C:/path/to/official.en.vtt",
+  "outputDirectory": "../../benchmark-results/cloud-asr/stanford",
+  "startSeconds": 300,
+  "durationSeconds": 60,
+  "frameMs": 100,
+  "providerOptions": {
+    "semanticPunctuation": false,
+    "maxSentenceSilenceMs": 800
+  }
+}

@@ -15,6 +15,7 @@ recordings/
 archives/
 release/
 release-*/
+benchmark-results/
 .impeccable/build/
 .impeccable/review/
 .impeccable/mocks/

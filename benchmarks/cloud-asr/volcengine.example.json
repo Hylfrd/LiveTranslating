@@ -1,0 +1,14 @@
+{
+  "name": "cloud-asr-sample",
+  "provider": "volcengine",
+  "input": "C:/path/to/sample.wav",
+  "reference": "C:/path/to/reference.vtt",
+  "outputDirectory": "../../benchmark-results/cloud-asr/sample",
+  "startSeconds": 0,
+  "durationSeconds": 60,
+  "frameMs": 200,
+  "providerOptions": {
+    "endWindowMs": 800,
+    "enableLid": false
+  }
+}
